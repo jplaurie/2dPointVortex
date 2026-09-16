@@ -1,4 +1,4 @@
-"""Smoke-test the generator, analysis notebook, and movie tool.
+"""Smoke-test the generator, plotting tools, analysis notebook, and movie tools.
 
 Requires the optional plotting/movie dependencies documented in README.md.
 Run from the repository root: python3 tests/tooling_tests.py build/release
@@ -17,6 +17,18 @@ def checked(command, **kwargs):
                             timeout=120, **kwargs)
     assert result.returncode == 0, result.stdout + result.stderr
     return result
+
+
+def execute_notebook(path, replacements):
+    notebook = json.loads(Path(path).read_text())
+    sources = [''.join(cell['source']) for cell in notebook['cells']
+               if cell['cell_type'] == 'code']
+    namespace = {}
+    for source in sources:
+        for old, new in replacements.items():
+            source = source.replace(old, new)
+        exec(compile(source, str(path), 'exec'), namespace)
+    namespace['plt'].close('all')
 
 
 def main(build):
@@ -69,7 +81,27 @@ def main(build):
                      directory / 'trajectory.csv', '--geometry', geometry, '--box-length', '2',
                      '--dpi', '50', '--fps', '4', '-o', movie])
             assert movie.stat().st_size > 100
-            print(f'{geometry}: generator, notebook, and movie passed', flush=True)
+            figures = directory / 'figures'
+            configuration = figures / 'vortices.pdf'
+            diagnostics = figures / 'diagnostics.pdf'
+            modern_movie = figures / 'vortices.mp4'
+            notebook_settings = {
+                "RUN_DIRECTORY = ROOT / 'runs/default'":
+                    f'RUN_DIRECTORY = Path({str(directory)!r})',
+                'USE_TEX = True': 'USE_TEX = False',
+            }
+            execute_notebook(repo / 'scripts/vortices.ipynb', {
+                **notebook_settings,
+                'FRAMES = [-1]': 'FRAMES = [0, -1]',
+            })
+            execute_notebook(repo / 'scripts/diagnostics.ipynb', notebook_settings)
+            checked([sys.executable, repo / 'scripts/movie_vortices.py',
+                     '--run-dir', directory, '--frames', '0', '-1', '--dpi', '50', '--fps', '4',
+                     '--output', modern_movie, '--no-tex'])
+            assert configuration.stat().st_size > 100
+            assert diagnostics.stat().st_size > 100
+            assert modern_movie.stat().st_size > 100
+            print(f'{geometry}: generator, notebook, plots, and movies passed', flush=True)
 
         # Bad data and empty selections must fail before destroying an existing movie.
         module_path = repo / 'scripts/movie/make_vortex_movie.py'

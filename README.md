@@ -52,8 +52,12 @@ and dipole removal/reinjection.
 ├── examples/             Small parameter files, including the quick start
 ├── tests/                C++ unit/audit and Python integration/backend tests
 ├── scripts/
+│   ├── vortices.ipynb    Vortex-configuration plotting notebook
+│   ├── diagnostics.ipynb Invariants, drift, and dipole-event notebook
+│   ├── movie_vortices.py Vortex-configuration MP4/GIF renderer
+│   ├── point_vortex_plotting.py  Shared readers and plotting helpers
 │   ├── analysis/         Jupyter notebook for diagnostics and configuration figures
-│   └── movie/            CSV-to-MP4 renderer
+│   └── movie/            Legacy streaming CSV-to-MP4 renderer
 ├── runs/                 Generated managed run output (ignored by Git)
 ├── CMakeLists.txt        Primary cross-platform build configuration
 ├── Makefile              Lightweight alternative build workflow
@@ -280,21 +284,21 @@ gaps in an individual CSV mean that stream was not scheduled at that event.
 
 ## Analysis and movies
 
-The supplied notebook reads solver CSV files and creates diagnostic and configuration figures:
+The plotting notebooks read a complete run directory, infer its geometry and box from
+`resolved_parameters.txt`, and write figures beneath that run by default. Open the notebooks and
+edit their clearly marked **Configuration** cells:
 
 ```bash
-jupyter lab scripts/analysis/point_vortex_analysis.ipynb
+jupyter lab scripts/vortices.ipynb scripts/diagnostics.ipynb
+python3 scripts/movie_vortices.py --run-dir runs/periodic_n400 \
+  --output runs/periodic_n400/figures/vortices.mp4
 ```
 
-Its requirements and settings are in [`scripts/analysis/README.md`](scripts/analysis/README.md).
-Render a trajectory to MP4 with:
-
-```bash
-python3 scripts/movie/make_vortex_movie.py runs/periodic_n400/trajectory.csv \
-  --geometry periodic --box-length 2 --output runs/periodic_n400/periodic.mp4
-```
-
-See [`scripts/movie/README.md`](scripts/movie/README.md) for dependencies and options.
+The configuration notebook can override the geometry, square or rectangular periodic box, disk
+radius, and explicit viewing limits. The movie exposes equivalent command-line options.
+Frame selection, GIF/MP4 output, diagnostics ranges, smoothing, dependencies, and more examples
+are documented in [`scripts/README.md`](scripts/README.md). The original analysis notebook and
+movie entry point remain under `scripts/analysis/` and `scripts/movie/` for compatibility.
 
 ## Test and validate changes
 
@@ -326,4 +330,3 @@ dependencies are installed.
 - Periodic dynamics currently requires a square, zero-net-circulation domain.
 - Core regularization is available only for the infinite plane.
 - Singular encounters, disk-boundary violations, and non-finite states stop the run.
-

@@ -1,6 +1,6 @@
-# PointVortex
+# 2dPointVortex
 
-PointVortex is a dependency-light C++20 solver for two-dimensional point-vortex dynamics. It
+2dPointVortex is a dependency-light C++20 solver for two-dimensional point-vortex dynamics. It
 supports the infinite plane, a square periodic box, and a circular disk; CPU/OpenMP, MPI, and
 NVIDIA CUDA executables use the same input format, integrators, output files, and checkpoints.
 

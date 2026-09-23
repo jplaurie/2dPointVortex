@@ -189,16 +189,128 @@ must remain strictly inside it. `absoluteTolerance`, `relativeTolerance`, `minim
 `maximumTimeStep` control adaptive DOPRI5. See the commented
 [`params.txt`](params.txt) for every supported setting, including dipole removal and reinjection.
 
-The model is the standard point-vortex equation. In the infinite plane,
+## Equations of motion
 
-```text
-dx_i/dt = -1/(2π) Σ[j≠i] Γ_j (y_i-y_j) / (r_ij² + ε²)
-dy_i/dt =  1/(2π) Σ[j≠i] Γ_j (x_i-x_j) / (r_ij² + ε²)
+Vortex $i$ has position $\boldsymbol r_i=(x_i,y_i)$ and constant
+circulation $\Gamma_i$. For every geometry the solver advances
+
+```math
+\frac{d\boldsymbol r_i}{dt}
+=\sum_j\Gamma_j\,\boldsymbol K_\Omega
+  (\boldsymbol r_i,\boldsymbol r_j),
+\qquad i=1,\ldots,N,
 ```
 
-where `Γ` is circulation and `ε` is `coreRadius`. The periodic implementation follows the
-[Weiss–McWilliams square-torus construction](https://atoc.colorado.edu/~jweiss/website/publications/WeissMcWilliams1991.pdf);
-the disk uses circle-theorem image vortices.
+where the kernel $\boldsymbol K_\Omega$ is selected by
+`boundaryCondition`.
+
+### Infinite plane
+
+For `boundaryCondition infinite`, the implemented regularized Biot–Savart
+equations are
+
+```math
+\begin{aligned}
+\frac{dx_i}{dt}
+  &=-\frac{1}{2\pi}\sum_{j\ne i}\Gamma_j
+    \frac{y_i-y_j}{r_{ij}^2+\varepsilon^2},\\
+\frac{dy_i}{dt}
+  &= \frac{1}{2\pi}\sum_{j\ne i}\Gamma_j
+    \frac{x_i-x_j}{r_{ij}^2+\varepsilon^2},\\
+r_{ij}^2&=(x_i-x_j)^2+(y_i-y_j)^2.
+\end{aligned}
+```
+
+Here $\varepsilon=\texttt{coreRadius}$. Setting $\varepsilon=0$ gives
+the singular point-vortex model. The Hamiltonian reported by the infinite
+plane diagnostics is
+
+```math
+H=-\frac{1}{4\pi}\sum_{i<j}\Gamma_i\Gamma_j
+  \log\!\left(r_{ij}^2+\varepsilon^2\right).
+```
+
+### Square periodic box
+
+For `boundaryCondition periodic`, the current implementation requires
+$L_x=L_y=L$ and $\sum_i\Gamma_i=0$. Define
+
+```math
+\kappa=\frac{2\pi}{L},
+\qquad
+X_{ij}=\kappa\,\operatorname{remainder}(x_i-x_j,L),
+\qquad
+Y_{ij}=\kappa\,\operatorname{remainder}(y_i-y_j,L).
+```
+
+The truncated Weiss–McWilliams image sum used by the code is
+
+```math
+\begin{aligned}
+\frac{dx_i}{dt}
+  &=-\frac{1}{2L}\sum_j\Gamma_j\sin Y_{ij}
+    \sum_{n=-M}^{M}
+    \frac{1}{\cosh(X_{ij}-2\pi n)-\cos Y_{ij}},\\
+\frac{dy_i}{dt}
+  &= \frac{1}{2L}\sum_j\Gamma_j\sin X_{ij}
+    \sum_{n=-M}^{M}
+    \frac{1}{\cosh(Y_{ij}-2\pi n)-\cos X_{ij}}.
+\end{aligned}
+```
+
+The singular $j=i,n=0$ contribution is omitted. Here
+$L=\texttt{boxLengthX}=\texttt{boxLengthY}$ and
+$M=\texttt{periodicImageLayers}$. Larger $M$ retains more periodic image
+layers at greater $O(N^2M)$ cost. This is the
+[Weiss–McWilliams square-torus construction](https://atoc.colorado.edu/~jweiss/website/publications/WeissMcWilliams1991.pdf).
+
+### Circular disk
+
+For `boundaryCondition disk`, let $R=\texttt{diskRadius}$, require
+$|\boldsymbol r_i|<R$, and define the inverse image
+
+```math
+\boldsymbol r_j^*=\frac{R^2}{|\boldsymbol r_j|^2}\boldsymbol r_j.
+```
+
+With $\boldsymbol J(a,b)=(-b,a)$, the circle-theorem velocity is
+
+```math
+\frac{d\boldsymbol r_i}{dt}
+=\frac{1}{2\pi}\boldsymbol J\!\left[
+  \sum_{j\ne i}\Gamma_j
+    \frac{\boldsymbol r_i-\boldsymbol r_j}
+         {|\boldsymbol r_i-\boldsymbol r_j|^2}
+  -\sum_j\Gamma_j
+    \frac{\boldsymbol r_i-\boldsymbol r_j^*}
+         {|\boldsymbol r_i-\boldsymbol r_j^*|^2}
+  \right].
+```
+
+The second sum includes the vortex's own opposite-sign image and enforces an
+impermeable circular wall. The implementation evaluates this term in an
+algebraically equivalent form that stays finite when a source is at the disk
+center.
+
+### Parameters and non-Hamiltonian events
+
+| Symbol | Parameter key | Meaning |
+|---|---|---|
+| $N$ | `N` | Built-in initial vortex count |
+| $\Gamma_i$ | third initial-condition column | Circulation of vortex $i$ |
+| $\varepsilon$ | `coreRadius` | Infinite-plane regularization radius |
+| $L_x,L_y$ | `boxLengthX`, `boxLengthY` | Periodic-box lengths |
+| $M$ | `periodicImageLayers` | Periodic image-sum truncation |
+| $R$ | `diskRadius` | Circular-domain radius |
+| $\Delta t,t_{\mathrm{end}}$ | `timeStep`, `endTime` | Initial/fixed step and final time |
+| tolerances | `absoluteTolerance`, `relativeTolerance` | Adaptive DOPRI5 error controls |
+
+There is no continuous forcing or viscous damping term in these ODEs.
+`dipoleRemoval`, `dipoleRemovalDistance`, and `dipoleReinjection` instead
+define discrete population events after accepted timesteps. Those events can
+change circulation moments and the Hamiltonian; they are recorded in the
+diagnostics and should not be interpreted as part of the conservative
+point-vortex equations.
 
 ## Initial conditions
 

@@ -162,6 +162,92 @@ Invariants computeInvariants(const VortexSystem &vortices, const VelocityKernel 
     return result;
 }
 
+PeriodicXKernel::PeriodicXKernel(double lengthX) : lengthX_(lengthX) {
+    if (!(lengthX > 0.0) || !std::isfinite(lengthX) ||
+        !std::isfinite(2.0 * std::numbers::pi / lengthX))
+        throw std::invalid_argument("invalid singly periodic length");
+}
+double PeriodicXKernel::hamiltonian(const VortexSystem &vortices) const {
+    vortices.validate();
+    double value = 0.0;
+    const double waveNumber = 2.0 * std::numbers::pi / lengthX_;
+    for (std::size_t i = 0; i < vortices.size(); ++i) {
+        for (std::size_t j = i + 1; j < vortices.size(); ++j) {
+            const double scaledX =
+                waveNumber * std::remainder(vortices.x[i] - vortices.x[j], lengthX_);
+            const double scaledY = waveNumber * (vortices.y[i] - vortices.y[j]);
+            const double magnitudeY = std::abs(scaledY);
+            double logDenominator = 0.0;
+            if (magnitudeY <= 40.0) {
+                const double sinhHalfY = std::sinh(0.5 * scaledY);
+                const double sinHalfX = std::sin(0.5 * scaledX);
+                const double denominator = 2.0 * (sinhHalfY * sinhHalfY + sinHalfX * sinHalfX);
+                if (denominator == 0.0)
+                    throw std::runtime_error("coincident singly periodic vortices");
+                logDenominator = std::log(denominator);
+            } else {
+                // Factor exp(|Y|)/2 out of cosh(Y)-cos(X) to avoid overflow.
+                const double q = std::exp(-magnitudeY);
+                logDenominator =
+                    magnitudeY - std::log(2.0) + std::log1p(q * q - 2.0 * q * std::cos(scaledX));
+            }
+            value -= vortices.circulation[i] * vortices.circulation[j] * logDenominator /
+                     (4.0 * std::numbers::pi);
+        }
+    }
+    return value;
+}
+void PeriodicXKernel::evaluateRange(const std::vector<double> &x, const std::vector<double> &y,
+                                    const std::vector<double> &circulation, VelocityField &velocity,
+                                    std::size_t begin, std::size_t end) const {
+    const std::size_t count = x.size();
+    validateVortexArrays(x, y, circulation);
+    if (begin > end || end > count)
+        throw std::out_of_range("invalid target-vortex range");
+    velocity.resize(count);
+    const double waveNumber = 2.0 * std::numbers::pi / lengthX_;
+    const double scale = 0.5 / lengthX_;
+    int singularPair = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if (count >= 256) reduction(| : singularPair)
+#endif
+    for (std::ptrdiff_t target = static_cast<std::ptrdiff_t>(begin);
+         target < static_cast<std::ptrdiff_t>(end); ++target) {
+        double u = 0.0, v = 0.0;
+        for (std::ptrdiff_t source = 0; source < static_cast<std::ptrdiff_t>(count); ++source) {
+            if (source == target)
+                continue;
+            const double scaledX = waveNumber * std::remainder(x[target] - x[source], lengthX_);
+            const double scaledY = waveNumber * (y[target] - y[source]);
+            const double magnitudeY = std::abs(scaledY);
+            double sinhRatio = 0.0, sineRatio = 0.0;
+            if (magnitudeY <= 40.0) {
+                const double sinhHalfY = std::sinh(0.5 * scaledY);
+                const double sinHalfX = std::sin(0.5 * scaledX);
+                const double denominator = 2.0 * (sinhHalfY * sinhHalfY + sinHalfX * sinHalfX);
+                if (denominator == 0.0) {
+                    singularPair = 1;
+                    continue;
+                }
+                sinhRatio = std::sinh(scaledY) / denominator;
+                sineRatio = std::sin(scaledX) / denominator;
+            } else {
+                // These scaled ratios tend to sign(Y) and zero, respectively.
+                const double q = std::exp(-magnitudeY);
+                const double denominator = 1.0 + q * q - 2.0 * q * std::cos(scaledX);
+                sinhRatio = std::copysign((1.0 - q * q) / denominator, scaledY);
+                sineRatio = 2.0 * q * std::sin(scaledX) / denominator;
+            }
+            u -= scale * circulation[source] * sinhRatio;
+            v += scale * circulation[source] * sineRatio;
+        }
+        velocity.x[target] = u;
+        velocity.y[target] = v;
+    }
+    if (singularPair != 0)
+        throw std::runtime_error("coincident singly periodic vortices");
+}
+
 PeriodicBoxKernel::PeriodicBoxKernel(double lengthX, double lengthY, int imageLayers)
     : lengthX_(lengthX), lengthY_(lengthY), imageLayers_(imageLayers) {
     if (!(lengthX > 0.0) || !(lengthY > 0.0) || !std::isfinite(lengthX) ||
@@ -220,6 +306,9 @@ void PeriodicBoxKernel::evaluateRange(const std::vector<double> &x, const std::v
          target < static_cast<std::ptrdiff_t>(end); ++target) {
         double u = 0.0, v = 0.0;
         for (std::ptrdiff_t source = 0; source < static_cast<std::ptrdiff_t>(count); ++source) {
+            // The symmetric nonzero self images have zero sine numerators.
+            if (source == target)
+                continue;
             const double scaledDx = waveNumber * std::remainder(x[target] - x[source], lengthX_);
             const double scaledDy = waveNumber * std::remainder(y[target] - y[source], lengthY_);
             const double sineX = std::sin(scaledDx), sineY = std::sin(scaledDy);
@@ -227,8 +316,6 @@ void PeriodicBoxKernel::evaluateRange(const std::vector<double> &x, const std::v
             const double sinHalfY = std::sin(0.5 * scaledDy);
             // Complementary sum orientations minimize finite-truncation drift.
             for (int image = -imageLayers_; image <= imageLayers_; ++image) {
-                if (source == target && image == 0)
-                    continue;
                 const double shiftedX = scaledDx - 2.0 * std::numbers::pi * image;
                 const double shiftedY = scaledDy - 2.0 * std::numbers::pi * image;
                 // cosh(a)-cos(b) loses all significant digits for close pairs.

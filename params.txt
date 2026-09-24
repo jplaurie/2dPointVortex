@@ -7,6 +7,7 @@ outputTime 0.01
 # Optional independent intervals; when omitted each follows outputTime.
 # diagnosticsTime 0.005
 # checkpointTime 0.1
+# Core regularization is supported only for infinite; all other geometries require zero.
 coreRadius 0.0
 integrator dopri5
 absoluteTolerance 1e-10
@@ -15,14 +16,18 @@ minimumTimeStep 1e-12
 maximumTimeStep 0.01
 numThreads 0
 boundaryCondition periodic
-# Geometry options used when boundaryCondition is periodic or disk.
+# Geometry choices are infinite, periodic_x (periodic in x and unbounded in y),
+# periodic (a square torus), and disk. periodic_x uses only boxLengthX. periodic
+# uses both box lengths, requires them to be equal, and uses periodicImageLayers.
 boxLengthX 1.0
 boxLengthY 1.0
 periodicImageLayers 8
 randomSeed 1234567
+# diskRadius is used only by the disk geometry.
 diskRadius 1.0
 # Remove close opposite-sign pairs after every accepted timestep. Reinjection modes are
-# none, independent, or paired; reinjection is available only for periodic and disk domains.
+# none, independent, or paired. Removal uses the minimum x image for periodic_x.
+# Reinjection is available only for the bounded periodic and disk domains.
 dipoleRemoval true
 # Full dipole separation threshold. In a disk this is the real/image distance;
 # the image is implicit and is not written as a second vortex.

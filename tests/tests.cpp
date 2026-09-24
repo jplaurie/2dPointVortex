@@ -88,7 +88,8 @@ void checkpointTest() {
     const DipoleEventState dipoleState = DipoleManager(parameters).state();
     const OutputSchedule schedule{0.1, 0.2, 0.5, 1.4, 1.5};
     const CheckpointProgress progress{1.25, 0.0125, 1.3, 42, 7, 9};
-    writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule, progress);
+    writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule,
+                    progress);
     const auto restored = loadCheckpoint(checkpointPath(directory, 7));
     if (!restored.hasOutputSchedule)
         throw std::runtime_error("checkpoint output schedule missing");
@@ -121,6 +122,17 @@ void checkpointTest() {
         throw std::runtime_error("checkpoint overwrite was not refused");
     writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule, progress,
                     true);
+    parameters.boundaryCondition = "periodic_x";
+    parameters.boxLengthX = 3.0;
+    CheckpointProgress periodicProgress = progress;
+    periodicProgress.outputIndex = 8;
+    writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule,
+                    periodicProgress);
+    const auto periodicRestored = loadCheckpoint(checkpointPath(directory, 8));
+    if (periodicRestored.boundaryCondition != "periodic_x" ||
+        periodicRestored.geometryLengthX != 3.0 || periodicRestored.geometryLengthY != 0.0 ||
+        periodicRestored.periodicImageLayers != 0)
+        throw std::runtime_error("singly periodic checkpoint geometry failed");
     std::filesystem::remove_all(directory);
 }
 void geometryTests() {
@@ -138,6 +150,26 @@ void geometryTests() {
         near(shifted.x[i], first.x[i], 2e-14, "periodic u invariance");
         near(shifted.y[i], first.y[i], 2e-14, "periodic v invariance");
     }
+    VortexSystem periodicX(2);
+    periodicX.x = {0.0, 0.5};
+    periodicX.y = {0.0, 0.0};
+    periodicX.circulation = {1.0, 1.0};
+    PeriodicXKernel cylinder(2.0);
+    cylinder.evaluate(periodicX, first);
+    near(first.x[0], 0.0, 0.0, "singly periodic pair u");
+    near(first.y[0], -0.25, 2e-16, "singly periodic pair v");
+    periodicX.x[1] += 2.0;
+    cylinder.evaluate(periodicX, shifted);
+    for (std::size_t i = 0; i < 2; ++i) {
+        near(shifted.x[i], first.x[i], 2e-16, "singly periodic u invariance");
+        near(shifted.y[i], first.y[i], 2e-16, "singly periodic v invariance");
+    }
+    periodicX.x = {0.0, 0.0};
+    periodicX.y = {-100.0, 100.0};
+    cylinder.evaluate(periodicX, first);
+    near(first.x[0], 0.25, 1e-15, "singly periodic lower far field");
+    near(first.x[1], -0.25, 1e-15, "singly periodic upper far field");
+    near(first.y[0], 0.0, 0.0, "singly periodic far-field transverse velocity");
     VortexSystem disk(1);
     disk.x[0] = 0.5;
     disk.y[0] = 0.0;
@@ -206,6 +238,22 @@ void periodicReinjectionTest() {
     DipoleManager restored(parameters, saved);
     if (restored.state().randomEngineState != saved.randomEngineState)
         throw std::runtime_error("reinjection random state restoration failed");
+}
+void periodicXDipoleRemovalTest() {
+    SimParams parameters;
+    parameters.boundaryCondition = "periodic_x";
+    parameters.boxLengthX = 2.0;
+    parameters.dipoleRemoval = true;
+    parameters.dipoleRemovalDistance = 0.05;
+    VortexSystem state(4);
+    state.x = {0.99, -0.99, 0.99, -0.99};
+    state.y = {0.0, 0.0, 0.0, 2.0};
+    state.circulation = {1.0, -1.0, 1.0, -1.0};
+    DipoleManager manager(parameters);
+    if (manager.process(state) != 1 || state.size() != 2)
+        throw std::runtime_error("singly periodic minimum-image dipole removal failed");
+    near(state.y[0], 0.0, 0.0, "singly periodic surviving first y");
+    near(state.y[1], 2.0, 0.0, "singly periodic unbounded y distance");
 }
 void diskReinjectionTest() {
     SimParams parameters;
@@ -344,6 +392,13 @@ void initialConditionGeneratorTest() {
         if (diskState.x[i] * diskState.x[i] + diskState.y[i] * diskState.y[i] >= 4.0)
             throw std::runtime_error("generated disk vortex lies outside disk");
 
+    InitialConditionOptions periodicX;
+    periodicX.geometry = InitialGeometry::periodic_x;
+    periodicX.pattern = InitialPattern::single;
+    const VortexSystem periodicXState = generateInitialCondition(periodicX);
+    if (periodicXState.size() != 1 || periodicXState.circulation[0] != 1.0)
+        throw std::runtime_error("singly periodic non-neutral initial condition failed");
+
     InitialConditionOptions dipole;
     dipole.geometry = InitialGeometry::periodic;
     dipole.pattern = InitialPattern::dipole;
@@ -391,6 +446,7 @@ int main() {
         periodicInitializationTest();
         dipoleRemovalTest();
         periodicReinjectionTest();
+        periodicXDipoleRemovalTest();
         diskReinjectionTest();
         diskWallDipoleRemovalTest();
         fsalTest();

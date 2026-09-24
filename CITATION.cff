@@ -6,7 +6,7 @@ authors:
   - family-names: Laurie
     given-names: Jason
     orcid: "https://orcid.org/0000-0002-3621-6052"
-abstract: "A C++20 solver for two-dimensional point-vortex dynamics in the infinite plane, a periodic box, and a circular disk, with CPU, MPI, and CUDA backends."
+abstract: "A C++20 solver for two-dimensional point-vortex dynamics in the infinite plane, a singly periodic plane, a periodic box, and a circular disk, with CPU, MPI, and CUDA backends."
 repository-code: "https://github.com/jplaurie/2dPointVortex"
 url: "https://github.com/jplaurie/2dPointVortex"
 license: BSD-3-Clause

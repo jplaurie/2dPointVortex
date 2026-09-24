@@ -57,6 +57,7 @@ struct SimParams {
 
     // Geometry controls. Only the fields selected by boundaryCondition are active.
     std::string boundaryCondition = "infinite";
+    // periodic_x uses boxLengthX; periodic uses both box lengths and image layers.
     double boxLengthX = 2.0;
     double boxLengthY = 2.0;
     double diskRadius = 1.0;

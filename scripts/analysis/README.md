@@ -6,7 +6,7 @@ backend. It writes two vector PDF figures:
 - `diagnostics_evolution.pdf` shows the Hamiltonian, geometry-relevant impulses, conservation
   drift, and cumulative dipole events;
 - `vortex_configurations.pdf` shows evenly spaced physical-space snapshots, including the
-  periodic square or disk boundary when applicable.
+  singly periodic strip, periodic square, or disk boundary when applicable.
 
 Launch Jupyter from the repository root:
 
@@ -14,7 +14,7 @@ Launch Jupyter from the repository root:
 jupyter lab scripts/analysis/point_vortex_analysis.ipynb
 ```
 
-Edit the settings in the first code cell to select `infinite`, `periodic`, or `disk`, specify the
+Edit the settings in the first code cell to select `infinite`, `periodic_x`, `periodic`, or `disk`, specify the
 domain size, input CSV paths, number of snapshots, and output directory. The defaults read
 `runs/default/trajectory.csv` and `runs/default/diagnostics.csv` and write PDFs under
 `runs/default/figures/`.

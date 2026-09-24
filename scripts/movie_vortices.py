@@ -49,8 +49,8 @@ def parse_arguments() -> argparse.Namespace:
     # record. They are exposed so a trajectory can be displayed in a different
     # box without editing the script.
     parser.add_argument("--geometry", choices=GEOMETRIES)
-    parser.add_argument("--box-length", type=float, help="periodic square side length")
-    parser.add_argument("--box-length-x", type=float, help="periodic box width")
+    parser.add_argument("--box-length", type=float, help="periodic length or square side")
+    parser.add_argument("--box-length-x", type=float, help="x-periodic length or box width")
     parser.add_argument("--box-length-y", type=float, help="periodic box height")
     parser.add_argument("--disk-radius", type=float, help="disk boundary radius")
     parser.add_argument("--xlim", nargs=2, type=float, metavar=("MIN", "MAX"))

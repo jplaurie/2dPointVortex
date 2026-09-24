@@ -34,8 +34,11 @@ double distance(const VortexSystem &vortices, std::size_t first, std::size_t sec
                 const InitialConditionOptions &options) {
     double dx = vortices.x[first] - vortices.x[second];
     double dy = vortices.y[first] - vortices.y[second];
-    if (options.geometry == InitialGeometry::periodic) {
+    if (options.geometry == InitialGeometry::periodic ||
+        options.geometry == InitialGeometry::periodic_x) {
         dx = std::remainder(dx, options.boxLength);
+    }
+    if (options.geometry == InitialGeometry::periodic) {
         dy = std::remainder(dy, options.boxLength);
     }
     return std::hypot(dx, dy);
@@ -46,7 +49,8 @@ double defaultPatternRadius(const InitialConditionOptions &options) {
         return options.ringRadius;
     if (options.geometry == InitialGeometry::disk)
         return 0.5 * options.diskRadius;
-    if (options.geometry == InitialGeometry::periodic)
+    if (options.geometry == InitialGeometry::periodic ||
+        options.geometry == InitialGeometry::periodic_x)
         return 0.25 * options.boxLength;
     return 0.5 * options.infiniteHalfWidth;
 }
@@ -73,11 +77,15 @@ VortexSystem makeRandom(const InitialConditionOptions &options) {
                 vortices.x[i] = radius * std::cos(theta);
                 vortices.y[i] = radius * std::sin(theta);
             } else {
-                const double halfWidth = options.geometry == InitialGeometry::periodic
-                                             ? 0.5 * options.boxLength
-                                             : options.infiniteHalfWidth;
-                vortices.x[i] = (2.0 * unit(generator) - 1.0) * halfWidth;
-                vortices.y[i] = (2.0 * unit(generator) - 1.0) * halfWidth;
+                const bool periodicX = options.geometry == InitialGeometry::periodic ||
+                                       options.geometry == InitialGeometry::periodic_x;
+                const double halfWidthX =
+                    periodicX ? 0.5 * options.boxLength : options.infiniteHalfWidth;
+                const double halfWidthY = options.geometry == InitialGeometry::periodic
+                                              ? 0.5 * options.boxLength
+                                              : options.infiniteHalfWidth;
+                vortices.x[i] = (2.0 * unit(generator) - 1.0) * halfWidthX;
+                vortices.y[i] = (2.0 * unit(generator) - 1.0) * halfWidthY;
             }
             accepted = true;
             for (std::size_t j = 0; j < i; ++j)
@@ -131,6 +139,8 @@ const char *toString(InitialGeometry geometry) {
     switch (geometry) {
     case InitialGeometry::infinite:
         return "infinite";
+    case InitialGeometry::periodic_x:
+        return "periodic_x";
     case InitialGeometry::periodic:
         return "periodic";
     case InitialGeometry::disk:
@@ -181,6 +191,10 @@ void validateInitialCondition(const VortexSystem &vortices,
             (vortices.x[i] < -0.5 * options.boxLength || vortices.x[i] >= 0.5 * options.boxLength ||
              vortices.y[i] < -0.5 * options.boxLength || vortices.y[i] >= 0.5 * options.boxLength))
             throw std::invalid_argument("periodic vortex lies outside the fundamental box");
+        if (options.geometry == InitialGeometry::periodic_x &&
+            (vortices.x[i] < -0.5 * options.boxLength || vortices.x[i] >= 0.5 * options.boxLength))
+            throw std::invalid_argument(
+                "singly periodic vortex lies outside the fundamental x interval");
         if (options.geometry == InitialGeometry::disk &&
             vortices.x[i] * vortices.x[i] + vortices.y[i] * vortices.y[i] >=
                 options.diskRadius * options.diskRadius)

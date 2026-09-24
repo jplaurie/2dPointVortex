@@ -32,6 +32,10 @@ python3 scripts/movie/make_vortex_movie.py runs/default/trajectory.csv \
 python3 scripts/movie/make_vortex_movie.py runs/default/trajectory.csv \
     --geometry periodic --box-length 2.0 --output runs/default/periodic.mp4
 
+# Periodic in x and unbounded in y. Only x coordinates are wrapped.
+python3 scripts/movie/make_vortex_movie.py runs/default/trajectory.csv \
+    --geometry periodic_x --box-length 2.0 --output runs/default/periodic_x.mp4
+
 # Circular disk.
 python3 scripts/movie/make_vortex_movie.py runs/default/trajectory.csv \
     --geometry disk --radius 1.0 --output runs/default/disk.mp4
@@ -46,7 +50,8 @@ python3 scripts/movie/make_vortex_movie.py runs/default/trajectory.csv \
 ```
 
 For an infinite-plane movie, `--xlim MIN MAX` and `--ylim MIN MAX` override the
-automatic limits. Other useful controls include `--fps`, `--dpi`,
+automatic limits. For `periodic_x`, `--ylim` overrides the automatic unbounded-direction limits.
+Other useful controls include `--fps`, `--dpi`,
 `--marker-size`, and `--title`. Run the script with `--help` for the complete
 command-line reference.
 

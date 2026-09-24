@@ -36,6 +36,11 @@ For the Make build, use `./build/make/point_vortex_initial` instead. Run with `-
 every option. The output file contains `x y circulation` rows and metadata comments understood
 by the simulation driver.
 
+For a singly periodic state, use `--geometry periodic_x`. `--box-length`
+sets the $x$ period and `--half-width` sets the finite sampling extent in the
+otherwise unbounded $y$ direction. Unlike the doubly periodic geometry,
+`periodic_x` permits nonzero total circulation.
+
 In a simulation parameter file, select the same geometry and domain size:
 
 ```text
@@ -50,5 +55,5 @@ and domain-size mismatches before starting a simulation.
 
 Missing output directories are created automatically. Existing files require `--overwrite` to
 replace them. The `single` case places a vortex at the origin; it is stationary in the infinite
-plane and at the disk center, and is rejected for periodic geometry. For an off-center disk
-orbit, supply a hand-written single-vortex file instead.
+plane, the singly periodic plane, and at the disk center, and is rejected only for the doubly
+periodic geometry. For an off-center disk orbit, supply a hand-written single-vortex file instead.

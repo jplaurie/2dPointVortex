@@ -46,10 +46,11 @@ def main(cpu, backend):
     large = [(rng.uniform(-.4, .4), rng.uniform(-.4, .4), 1 if i % 2 == 0 else -1)
              for i in range(258)]
     cases = [(geometry + '_run', geometry, ordinary, .003)
-             for geometry in ('infinite', 'periodic', 'disk')]
+             for geometry in ('infinite', 'periodic_x', 'periodic', 'disk')]
     cases += [(geometry + '_openmp', geometry, large, 0)
-              for geometry in ('infinite', 'periodic', 'disk')]
+              for geometry in ('infinite', 'periodic_x', 'periodic', 'disk')]
     cases += [('periodic_close', 'periodic', [(0, 0, 1), (1e-10, 0, -1)], 0),
+              ('periodic_x_non_neutral', 'periodic_x', [(0, 0, 1), (.2, .1, 1)], .003),
               ('disk_center', 'disk', [(.2, 0, 1), (1e-155, 0, 1)], 0)]
     with tempfile.TemporaryDirectory(prefix='point_vortex_backend_test_') as tmp:
         root = Path(tmp)
@@ -60,7 +61,7 @@ def main(cpu, backend):
             for filename in ('trajectory.csv', 'diagnostics.csv'):
                 compare(left / filename, right / filename)
             print(f'{name}: matched CPU reference', flush=True)
-        for geometry in ('infinite', 'periodic', 'disk'):
+        for geometry in ('infinite', 'periodic_x', 'periodic', 'disk'):
             left, right = root / (geometry + '_dopri_cpu'), root / (geometry + '_dopri_backend')
             run([cpu], left, geometry, ordinary, .003, integrator='dopri5')
             run(backend, right, geometry, ordinary, .003, integrator='dopri5')

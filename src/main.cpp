@@ -53,12 +53,13 @@ void removeManagedRunOutput(const RunPaths &paths) {
 }
 
 bool checkpointMatches(const Checkpoint &checkpoint, const SimParams &params) {
-    const double lengthX = params.boundaryCondition == "periodic"
+    const bool periodicX =
+        params.boundaryCondition == "periodic" || params.boundaryCondition == "periodic_x";
+    const double lengthX = periodicX
                                ? params.boxLengthX
                                : (params.boundaryCondition == "disk" ? params.diskRadius : 0.0);
     const double lengthY = params.boundaryCondition == "periodic" ? params.boxLengthY : 0.0;
-    const int imageLayers =
-        params.boundaryCondition == "periodic" ? params.periodicImageLayers : 0;
+    const int imageLayers = params.boundaryCondition == "periodic" ? params.periodicImageLayers : 0;
     return checkpoint.coreRadius == params.coreRadius &&
            checkpoint.integrator == params.integrator &&
            checkpoint.boundaryCondition == params.boundaryCondition &&
@@ -77,13 +78,17 @@ VortexSystem makeInitialState(const SimParams &params) {
         if (metadata.geometry && *metadata.geometry != params.boundaryCondition)
             throw std::invalid_argument("initial-condition geometry is " + *metadata.geometry +
                                         " but boundaryCondition is " + params.boundaryCondition);
-        if (params.boundaryCondition == "periodic" && metadata.boxLength &&
-            (std::abs(*metadata.boxLength - params.boxLengthX) >
-                 1e-13 * std::max(*metadata.boxLength, params.boxLengthX) ||
-             std::abs(*metadata.boxLength - params.boxLengthY) >
-                 1e-13 * std::max(*metadata.boxLength, params.boxLengthY)))
-            throw std::invalid_argument(
-                "initial-condition box length does not match simulation parameters");
+        if ((params.boundaryCondition == "periodic" || params.boundaryCondition == "periodic_x") &&
+            metadata.boxLength) {
+            const bool xMismatch = std::abs(*metadata.boxLength - params.boxLengthX) >
+                                   1e-13 * std::max(*metadata.boxLength, params.boxLengthX);
+            const bool yMismatch = params.boundaryCondition == "periodic" &&
+                                   std::abs(*metadata.boxLength - params.boxLengthY) >
+                                       1e-13 * std::max(*metadata.boxLength, params.boxLengthY);
+            if (xMismatch || yMismatch)
+                throw std::invalid_argument(
+                    "initial-condition periodic length does not match simulation parameters");
+        }
         if (params.boundaryCondition == "disk" && metadata.diskRadius &&
             std::abs(*metadata.diskRadius - params.diskRadius) >
                 1e-13 * std::max(*metadata.diskRadius, params.diskRadius))

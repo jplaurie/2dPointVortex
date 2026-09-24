@@ -40,7 +40,7 @@ def main(build):
         os.environ['MPLBACKEND'] = 'Agg'
         notebook = json.loads((repo / 'scripts/analysis/point_vortex_analysis.ipynb').read_text())
         code = [''.join(cell['source']) for cell in notebook['cells'] if cell['cell_type'] == 'code']
-        for geometry in ('infinite', 'periodic', 'disk'):
+        for geometry in ('infinite', 'periodic_x', 'periodic', 'disk'):
             directory = root / geometry
             initial = directory / 'nested/initial.dat'
             checked([build / 'point_vortex_initial', '--geometry', geometry, '--case', 'random',

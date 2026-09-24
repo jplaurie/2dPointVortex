@@ -155,7 +155,8 @@ void printDiagnostics(double time, std::size_t steps, const Invariants &value,
               << " H=" << value.hamiltonian << " dH=" << value.hamiltonian - initial.hamiltonian
               << " segmentDH=" << value.hamiltonian - segmentReference.hamiltonian;
 
-    if (boundaryCondition == "infinite" || boundaryCondition == "periodic") {
+    if (boundaryCondition == "infinite" || boundaryCondition == "periodic_x" ||
+        boundaryCondition == "periodic") {
         std::cout << " Ix=" << value.linearImpulseX
                   << " dIx=" << value.linearImpulseX - initial.linearImpulseX
                   << " segmentDIx=" << value.linearImpulseX - segmentReference.linearImpulseX

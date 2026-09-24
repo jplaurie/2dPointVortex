@@ -37,9 +37,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("input", type=Path, help="trajectory CSV, normally runDirectory/trajectory.csv")
     parser.add_argument("-o", "--output", type=Path, default=Path("vortices.mp4"))
     parser.add_argument(
-        "--geometry", choices=("infinite", "periodic", "disk"), default="infinite"
+        "--geometry", choices=("infinite", "periodic_x", "periodic", "disk"), default="infinite"
     )
-    parser.add_argument("--box-length", type=float, default=2.0, help="periodic square side")
+    parser.add_argument("--box-length", type=float, default=2.0, help="periodic length or square side")
     parser.add_argument("--radius", type=float, default=1.0, help="disk radius")
     parser.add_argument("--xlim", nargs=2, type=float, metavar=("MIN", "MAX"))
     parser.add_argument("--ylim", nargs=2, type=float, metavar=("MIN", "MAX"))
@@ -130,6 +130,23 @@ def infinite_limits(path: Path, args: argparse.Namespace) -> tuple[tuple[float, 
     return (minimum_x - padding, maximum_x + padding), (minimum_y - padding, maximum_y + padding)
 
 
+def periodic_x_y_limits(path: Path, args: argparse.Namespace) -> tuple[float, float]:
+    """Find fixed limits in the unbounded direction without using unwrapped x."""
+    minimum_y, maximum_y = math.inf, -math.inf
+    for _, (_, _, y, circulation) in selected_frames(path, args.start, args.stop, args.stride):
+        visible_y = [py for py, gamma in zip(y, circulation) if gamma != 0.0]
+        if visible_y:
+            minimum_y = min(minimum_y, min(visible_y))
+            maximum_y = max(maximum_y, max(visible_y))
+    if not math.isfinite(minimum_y):
+        raise ValueError("no non-zero-circulation vortices in the selected frames")
+    if maximum_y - minimum_y < 1.0e-12:
+        center = 0.5 * (minimum_y + maximum_y)
+        return center - 0.5 * args.box_length, center + 0.5 * args.box_length
+    padding = 0.05 * max(maximum_y - minimum_y, args.box_length)
+    return minimum_y - padding, maximum_y + padding
+
+
 def wrap_periodic(values: list[float], length: float) -> list[float]:
     half_length = 0.5 * length
     return [((value + half_length) % length) - half_length for value in values]
@@ -158,6 +175,11 @@ def main() -> None:
     if args.geometry == "periodic":
         half_length = 0.5 * args.box_length
         x_limits = y_limits = (-half_length, half_length)
+    elif args.geometry == "periodic_x":
+        half_length = 0.5 * args.box_length
+        automatic_y = periodic_x_y_limits(args.input, args)
+        x_limits = (-half_length, half_length)
+        y_limits = tuple(args.ylim) if args.ylim else automatic_y
     elif args.geometry == "disk":
         x_limits = y_limits = (-args.radius, args.radius)
     else:
@@ -181,6 +203,9 @@ def main() -> None:
                 linewidth=1.2,
             )
         )
+    elif args.geometry == "periodic_x":
+        axes.axvline(-0.5 * args.box_length, color="black", linewidth=1.0)
+        axes.axvline(0.5 * args.box_length, color="black", linewidth=1.0)
     elif args.geometry == "disk":
         axes.add_patch(Circle((0.0, 0.0), args.radius, fill=False, color="black", linewidth=1.5))
 
@@ -197,6 +222,8 @@ def main() -> None:
             if args.geometry == "periodic":
                 x = wrap_periodic(x, args.box_length)
                 y = wrap_periodic(y, args.box_length)
+            elif args.geometry == "periodic_x":
+                x = wrap_periodic(x, args.box_length)
 
             positive.set_offsets(
                 offsets(

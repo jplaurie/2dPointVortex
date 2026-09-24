@@ -37,6 +37,14 @@ void closeEncounterTests() {
         throw std::runtime_error("close periodic energy is non-finite");
     state.x[1] = 0;
     rejects([&] { box.evaluate(state, velocity); }, "coincident periodic pair");
+    state.x = {0, 1e-10};
+    PeriodicXKernel cylinder(2);
+    cylinder.evaluate(state, velocity);
+    near(velocity.y[0] / (inverseTwoPi / 1e-10), 1, 1e-12, "close singly periodic pair");
+    if (!std::isfinite(cylinder.hamiltonian(state)))
+        throw std::runtime_error("close singly periodic energy is non-finite");
+    state.x[1] = 0;
+    rejects([&] { cylinder.evaluate(state, velocity); }, "coincident singly periodic pair");
     state.x = {0.2, 1e-155};
     state.circulation = {1, 1};
     DiskKernel disk(1);
@@ -54,10 +62,12 @@ void hamiltonianTests() {
     state.y = {-.12, .14, -.29, .32};
     state.circulation = {1, -1, 2, -2};
     InfinitePlaneKernel plane(.05);
+    PeriodicXKernel cylinder(2);
     PeriodicBoxKernel box(2, 2);
     DiskKernel disk(1);
     for (const VelocityKernel *kernel :
-         {static_cast<const VelocityKernel *>(&plane), static_cast<const VelocityKernel *>(&box),
+         {static_cast<const VelocityKernel *>(&plane),
+          static_cast<const VelocityKernel *>(&cylinder), static_cast<const VelocityKernel *>(&box),
           static_cast<const VelocityKernel *>(&disk)}) {
         VelocityField velocity;
         kernel->evaluate(state, velocity);
@@ -111,6 +121,12 @@ void invalidNumericTests() {
     params = SimParams{};
     params.coreRadius = 1e200;
     rejects([&] { params.validate(); }, "overflowed core radius square");
+    params = SimParams{};
+    params.boundaryCondition = "periodic_x";
+    params.validate();
+    params.dipoleRemoval = true;
+    params.dipoleReinjection = ReinjectionMode::paired;
+    rejects([&] { params.validate(); }, "singly periodic reinjection");
     state.x[0] = std::numeric_limits<double>::quiet_NaN();
     VelocityField velocity;
     rejects([&] { plane.evaluate(state, velocity); }, "non-finite initial position");

@@ -16,7 +16,7 @@ import numpy as np
 from matplotlib.patches import Circle, Rectangle
 
 
-GEOMETRIES = ("infinite", "periodic", "disk")
+GEOMETRIES = ("infinite", "periodic_x", "periodic", "disk")
 
 
 @dataclass(frozen=True)
@@ -303,6 +303,8 @@ def display_coordinates(frame: VortexFrame, domain: Domain) -> tuple[np.ndarray,
             wrap_periodic(frame.x, domain.length_x),
             wrap_periodic(frame.y, domain.length_y),
         )
+    if domain.geometry == "periodic_x":
+        return wrap_periodic(frame.x, domain.length_x), frame.y
     return frame.x, frame.y
 
 
@@ -315,6 +317,18 @@ def axis_limits(
             (-0.5 * domain.length_x, 0.5 * domain.length_x),
             (-0.5 * domain.length_y, 0.5 * domain.length_y),
         )
+    elif domain.geometry == "periodic_x":
+        y = np.concatenate([frame.y for frame in frames])
+        if not y.size:
+            raise ValueError("the selected configurations contain no vortices")
+        lower, upper = float(np.min(y)), float(np.max(y))
+        if upper - lower < 1.0e-12:
+            center = 0.5 * (lower + upper)
+            y_default = (center - 0.5 * domain.length_x, center + 0.5 * domain.length_x)
+        else:
+            padding = 0.05 * max(upper - lower, domain.length_x)
+            y_default = (lower - padding, upper + padding)
+        defaults = ((-0.5 * domain.length_x, 0.5 * domain.length_x), y_default)
     elif domain.geometry == "disk":
         defaults = ((-domain.radius, domain.radius), (-domain.radius, domain.radius))
     else:
@@ -334,7 +348,7 @@ def axis_limits(
 
 
 def draw_boundary(axis: plt.Axes, domain: Domain) -> None:
-    """Draw the physical boundary for periodic and disk geometries."""
+    """Draw periodic-cell edges or the physical disk boundary."""
     if domain.geometry == "periodic":
         axis.add_patch(
             Rectangle(
@@ -346,6 +360,9 @@ def draw_boundary(axis: plt.Axes, domain: Domain) -> None:
                 linewidth=1.2,
             )
         )
+    elif domain.geometry == "periodic_x":
+        axis.axvline(-0.5 * domain.length_x, color="black", linewidth=1.0)
+        axis.axvline(0.5 * domain.length_x, color="black", linewidth=1.0)
     elif domain.geometry == "disk":
         axis.add_patch(
             Circle((0.0, 0.0), domain.radius, fill=False, color="black", linewidth=1.4)

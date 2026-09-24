@@ -46,6 +46,19 @@ class InfinitePlaneKernel final : public VelocityKernel {
   private:
     double coreRadiusSquared_;
 };
+// Cylinder: periodic in x with period L and unbounded in y.
+class PeriodicXKernel final : public VelocityKernel {
+  public:
+    using VelocityKernel::evaluate;
+    explicit PeriodicXKernel(double lengthX);
+    void evaluateRange(const std::vector<double> &, const std::vector<double> &,
+                       const std::vector<double> &, VelocityField &, std::size_t,
+                       std::size_t) const override;
+    double hamiltonian(const VortexSystem &) const override;
+
+  private:
+    double lengthX_;
+};
 // Weiss--McWilliams rapidly convergent image sum for a square torus.
 class PeriodicBoxKernel final : public VelocityKernel {
   public:

@@ -17,7 +17,7 @@ void cudaCheck(cudaError_t status, const char *operation) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
 }
 
-enum class Geometry : int { infinite, periodic, disk };
+enum class Geometry : int { infinite, periodic_x, periodic, disk };
 
 __global__ void velocityKernel(const double *x, const double *y, const double *gamma, double *u,
                                double *v, std::size_t count, std::size_t begin, std::size_t end,
@@ -34,8 +34,14 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
         return;
     }
     constexpr double inverseTwoPi = 0.15915494309189533576888376337251;
+    constexpr double twoPi = 6.283185307179586476925286766559;
     double velocityX = 0.0, velocityY = 0.0;
     double inverseRadius = 0.0, targetX = 0.0, targetY = 0.0;
+    double waveNumber = 0.0, periodicScale = 0.0;
+    if (geometry == Geometry::periodic_x || geometry == Geometry::periodic) {
+        waveNumber = twoPi / first;
+        periodicScale = 0.5 / first;
+    }
     if (geometry == Geometry::disk) {
         inverseRadius = 1.0 / first;
         targetX = x[target] * inverseRadius;
@@ -56,17 +62,40 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
             const double coefficient = inverseTwoPi * gamma[source] / denominator;
             velocityX -= coefficient * dy;
             velocityY += coefficient * dx;
+        } else if (geometry == Geometry::periodic_x) {
+            if (source == target)
+                continue;
+            const double scaledX = waveNumber * remainder(x[target] - x[source], first);
+            const double scaledY = waveNumber * (y[target] - y[source]);
+            const double magnitudeY = fabs(scaledY);
+            double sinhRatio = 0.0, sineRatio = 0.0;
+            if (magnitudeY <= 40.0) {
+                const double sinhHalfY = sinh(0.5 * scaledY);
+                const double sinHalfX = sin(0.5 * scaledX);
+                const double denominator = 2.0 * (sinhHalfY * sinhHalfY + sinHalfX * sinHalfX);
+                if (denominator == 0.0) {
+                    atomicExch(failure, 1);
+                    continue;
+                }
+                sinhRatio = sinh(scaledY) / denominator;
+                sineRatio = sin(scaledX) / denominator;
+            } else {
+                const double q = exp(-magnitudeY);
+                const double denominator = 1.0 + q * q - 2.0 * q * cos(scaledX);
+                sinhRatio = copysign((1.0 - q * q) / denominator, scaledY);
+                sineRatio = 2.0 * q * sin(scaledX) / denominator;
+            }
+            velocityX -= periodicScale * gamma[source] * sinhRatio;
+            velocityY += periodicScale * gamma[source] * sineRatio;
         } else if (geometry == Geometry::periodic) {
-            constexpr double twoPi = 6.283185307179586476925286766559;
-            const double waveNumber = twoPi / first;
-            const double scale = 0.5 / first;
+            // The symmetric nonzero self images have zero sine numerators.
+            if (source == target)
+                continue;
             const double dx = waveNumber * remainder(x[target] - x[source], first);
             const double dy = waveNumber * remainder(y[target] - y[source], second);
             const double sineX = sin(dx), sineY = sin(dy);
             const double sinHalfX = sin(0.5 * dx), sinHalfY = sin(0.5 * dy);
             for (int image = -imageLayers; image <= imageLayers; ++image) {
-                if (source == target && image == 0)
-                    continue;
                 const double shiftedX = dx - twoPi * image;
                 const double shiftedY = dy - twoPi * image;
                 const double sinhHalfX = fabs(shiftedX) > 40.0 ? CUDART_INF : sinh(0.5 * shiftedX);
@@ -77,8 +106,8 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
                     atomicExch(failure, 1);
                     continue;
                 }
-                velocityX -= scale * gamma[source] * sineY / denominatorU;
-                velocityY += scale * gamma[source] * sineX / denominatorV;
+                velocityX -= periodicScale * gamma[source] * sineY / denominatorU;
+                velocityY += periodicScale * gamma[source] * sineX / denominatorV;
             }
         } else {
             if (source != target) {
@@ -205,6 +234,8 @@ class CudaKernel final : public VelocityKernel {
         : params_(params), cpu_(makeReferenceKernel(params)) {
         if (params.boundaryCondition == "infinite")
             geometry_ = Geometry::infinite;
+        else if (params.boundaryCondition == "periodic_x")
+            geometry_ = Geometry::periodic_x;
         else if (params.boundaryCondition == "periodic")
             geometry_ = Geometry::periodic;
         else
@@ -404,10 +435,10 @@ class CudaKernel final : public VelocityKernel {
         if (begin == end)
             return;
         cudaCheck(cudaMemset(deviceFailure_, 0, sizeof(int)), "clear CUDA velocity error flag");
-        const double first =
-            geometry_ == Geometry::infinite
-                ? params_.coreRadius * params_.coreRadius
-                : (geometry_ == Geometry::periodic ? params_.boxLengthX : params_.diskRadius);
+        const bool periodicX = geometry_ == Geometry::periodic_x || geometry_ == Geometry::periodic;
+        const double first = geometry_ == Geometry::infinite
+                                 ? params_.coreRadius * params_.coreRadius
+                                 : (periodicX ? params_.boxLengthX : params_.diskRadius);
         velocityKernel<<<blockCount(end - begin), threadsPerBlock>>>(
             x, y, deviceGamma_, u, v, stateCount_, begin, end, geometry_, first, params_.boxLengthY,
             params_.periodicImageLayers, deviceFailure_);

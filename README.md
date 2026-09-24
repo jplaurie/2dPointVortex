@@ -1,11 +1,13 @@
 # 2dPointVortex
 
 2dPointVortex is a dependency-light C++20 solver for two-dimensional point-vortex dynamics. It
-supports the infinite plane, a square periodic box, and a circular disk; CPU/OpenMP, MPI, and
-NVIDIA CUDA executables use the same input format, integrators, output files, and checkpoints.
+supports the infinite plane, a plane periodic in one direction, a square periodic box, and a
+circular disk; CPU/OpenMP, MPI, and NVIDIA CUDA executables use the same input format,
+integrators, output files, and checkpoints.
 
-The solver uses direct `O(N^2)` velocity sums. It is a clear numerical reference and a practical
-tool for small-to-medium simulations; it is not a tree-code or FMM implementation.
+The solver uses direct all-pairs velocity sums: `O(N^2)` except for the doubly periodic
+`O(N^2 M)` image sum. It is a clear numerical reference and a practical tool for small-to-medium
+simulations; it is not a tree-code or FMM implementation.
 
 ## Quick start
 
@@ -36,11 +38,11 @@ and dipole removal/reinjection.
 
 ## Features
 
-- Three geometries: `infinite`, `periodic`, and `disk`
+- Four geometries: `infinite`, `periodic_x`, `periodic`, and `disk`
 - Fixed-step classical RK4 and adaptive Dormand-Prince 5(4) integration
 - CPU serial/OpenMP, MPI, and CUDA velocity backends
 - Text initial conditions, geometry-aware generator, CSV output, and restart checkpoints
-- Optional close dipole removal and reinjection in periodic and disk domains
+- Optional close dipole removal, with reinjection in bounded periodic and disk domains
 - CMake and Make builds, numerical tests, and analysis/movie tools
 
 ## Repository layout
@@ -171,7 +173,7 @@ Most-used settings:
 | Setting | Values / default | Purpose |
 |---|---|---|
 | `N` | `100` | Built-in initial population; ignored for file/checkpoint input |
-| `boundaryCondition` | `infinite` | `infinite`, `periodic`, or `disk` |
+| `boundaryCondition` | `infinite` | `infinite`, `periodic_x`, `periodic`, or `disk` |
 | `integrator` | `dopri5` | `rk4` or adaptive `dopri5` |
 | `timeStep`, `endTime` | `0.001`, `1.0` | Initial/fixed step and final simulation time |
 | `outputTime` | `0.1` | Trajectory interval; final state is always saved |
@@ -183,11 +185,13 @@ Most-used settings:
 | `runDirectory` | `runs/default` | Self-contained output root for this simulation |
 | `overwriteRun` | `false` | Replace this directory's managed solver output |
 
-For a periodic box, set `boxLengthX`, `boxLengthY` (currently equal), and optionally
-`periodicImageLayers`; total circulation must be zero. For a disk, set `diskRadius`; every vortex
-must remain strictly inside it. `absoluteTolerance`, `relativeTolerance`, `minimumTimeStep`, and
-`maximumTimeStep` control adaptive DOPRI5. See the commented
-[`params.txt`](params.txt) for every supported setting, including dipole removal and reinjection.
+For a plane periodic only in $x$, select `periodic_x` and set `boxLengthX`; $y$ remains unbounded
+and total circulation need not vanish. For a periodic box, set `boxLengthX`, `boxLengthY`
+(currently equal), and optionally `periodicImageLayers`; total circulation must be zero. For a
+disk, set `diskRadius`; every vortex must remain strictly inside it. `absoluteTolerance`,
+`relativeTolerance`, `minimumTimeStep`, and `maximumTimeStep` control adaptive DOPRI5. See the
+commented [`params.txt`](params.txt) for every supported setting, including dipole removal and
+reinjection.
 
 ## Equations of motion
 
@@ -229,6 +233,43 @@ plane diagnostics is
 H=-\frac{1}{4\pi}\sum_{i<j}\Gamma_i\Gamma_j
   \log\!\left(r_{ij}^2+\varepsilon^2\right).
 ```
+
+### Periodic in one direction
+
+For `boundaryCondition periodic_x`, the $x$ direction has period
+$L=\texttt{boxLengthX}$ and the $y$ direction is unbounded. This is the
+singly periodic plane, topologically a cylinder. Define
+
+```math
+X_{ij}=\frac{2\pi}{L}\operatorname{remainder}(x_i-x_j,L),
+\qquad
+Y_{ij}=\frac{2\pi}{L}(y_i-y_j).
+```
+
+Summing the infinite row of periodic images with
+$\sum_n(z+nL)^{-1}=(\pi/L)\cot(\pi z/L)$ gives the exact real-valued kernel
+
+```math
+\begin{aligned}
+\frac{dx_i}{dt}
+  &=-\frac{1}{2L}\sum_{j\ne i}\Gamma_j
+    \frac{\sinh Y_{ij}}{\cosh Y_{ij}-\cos X_{ij}},\\
+\frac{dy_i}{dt}
+  &= \frac{1}{2L}\sum_{j\ne i}\Gamma_j
+    \frac{\sin X_{ij}}{\cosh Y_{ij}-\cos X_{ij}}.
+\end{aligned}
+```
+
+No image truncation or zero-total-circulation constraint is needed, so this
+kernel costs $O(N^2)$. The implementation uses scaled expressions at large
+$|Y_{ij}|$ to avoid hyperbolic-function overflow. Its reported Hamiltonian is
+
+```math
+H=-\frac{1}{4\pi}\sum_{i<j}\Gamma_i\Gamma_j
+  \log\!\left(\cosh Y_{ij}-\cos X_{ij}\right),
+```
+
+which is defined up to the usual circulation-dependent additive constant.
 
 ### Square periodic box
 
@@ -299,8 +340,8 @@ center.
 | $N$ | `N` | Built-in initial vortex count |
 | $\Gamma_i$ | third initial-condition column | Circulation of vortex $i$ |
 | $\varepsilon$ | `coreRadius` | Infinite-plane regularization radius |
-| $L_x,L_y$ | `boxLengthX`, `boxLengthY` | Periodic-box lengths |
-| $M$ | `periodicImageLayers` | Periodic image-sum truncation |
+| $L_x,L_y$ | `boxLengthX`, `boxLengthY` | Periodic lengths; `periodic_x` uses only $L_x$ |
+| $M$ | `periodicImageLayers` | Doubly periodic image-sum truncation |
 | $R$ | `diskRadius` | Circular-domain radius |
 | $\Delta t,t_{\mathrm{end}}$ | `timeStep`, `endTime` | Initial/fixed step and final time |
 | tolerances | `absoluteTolerance`, `relativeTolerance` | Adaptive DOPRI5 error controls |
@@ -311,6 +352,13 @@ define discrete population events after accepted timesteps. Those events can
 change circulation moments and the Hamiltonian; they are recorded in the
 diagnostics and should not be interpreted as part of the conservative
 point-vortex equations.
+
+Without removal events, circulation and Hamiltonian are reported for every
+geometry. The diagnostics additionally treat both linear impulses as relevant
+for `infinite`, `periodic_x`, and `periodic`, and angular impulse as relevant
+for `infinite` and `disk`. CSV files retain every invariant column so their
+schema remains identical across geometries; console and notebook displays
+select the geometry-appropriate subset.
 
 ## Initial conditions
 
@@ -336,7 +384,8 @@ cmake --build build/release --target point_vortex_initial --parallel
   --box-length 2 --min-separation 0.01 --output runs/periodic_n400/initial_n400.dat
 ```
 
-The generator supports `single`, `pair`, `dipole`, `ring`, and `random` cases, records geometry
+The generator supports all four geometries and the `single`, `pair`, `dipole`, `ring`, and
+`random` cases, records geometry
 metadata, and refuses incompatible solver settings. Full options and examples are in
 [`initial_conditions/README.md`](initial_conditions/README.md).
 
@@ -406,8 +455,9 @@ python3 scripts/movie_vortices.py --run-dir runs/periodic_n400 \
   --output runs/periodic_n400/figures/vortices.mp4
 ```
 
-The configuration notebook can override the geometry, square or rectangular periodic box, disk
-radius, and explicit viewing limits. The movie exposes equivalent command-line options.
+The configuration notebook can override the geometry, the singly periodic length, square or
+rectangular periodic display box, disk radius, and explicit viewing limits. The movie exposes
+equivalent command-line options.
 Frame selection, GIF/MP4 output, diagnostics ranges, smoothing, dependencies, and more examples
 are documented in [`scripts/README.md`](scripts/README.md). The original analysis notebook and
 movie entry point remain under `scripts/analysis/` and `scripts/movie/` for compatibility.
@@ -436,10 +486,13 @@ dependencies are installed.
 
 ## Limitations
 
-- Velocity evaluation is direct `O(N^2)`; MPI still replicates the source arrays on each rank.
+- Velocity evaluation is direct `O(N^2)` (`O(N^2 M)` for the doubly periodic image sum); MPI
+  still replicates the source arrays on each rank.
 - CUDA keeps velocity evaluation and RK4/DOPRI5 integration on the device; diagnostics and file
   I/O remain host-side, and the stage buffers increase GPU-memory use.
-- Periodic dynamics currently requires a square, zero-net-circulation domain.
+- Doubly periodic dynamics currently requires a square, zero-net-circulation domain;
+  `periodic_x` has neither restriction on the unbounded direction nor a neutrality requirement.
+- Dipole reinjection is not defined for the unbounded `infinite` and `periodic_x` geometries.
 - Core regularization is available only for the infinite plane.
 - Singular encounters, disk-boundary violations, and non-finite states stop the run.
 

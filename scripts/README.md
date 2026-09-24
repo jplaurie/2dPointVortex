@@ -41,6 +41,11 @@ BOX_LENGTH = None
 BOX_LENGTH_X = 2.0
 BOX_LENGTH_Y = 4.0
 
+# Singly periodic display; only x is wrapped.
+GEOMETRY = 'periodic_x'
+BOX_LENGTH = 2.0
+Y_LIMITS = (-3.0, 3.0)
+
 # Disk boundary and an explicit viewing window instead:
 GEOMETRY = 'disk'
 DISK_RADIUS = 1.5
@@ -49,9 +54,9 @@ Y_LIMITS = (-2.0, 2.0)
 ```
 
 `BOX_LENGTH` cannot be combined with `BOX_LENGTH_X` or `BOX_LENGTH_Y`. Box
-lengths and disk radius must be positive. The solver currently supports only
-square periodic dynamics, but separate display lengths
-make the plotting tools usable with rectangular trajectory data too.
+lengths and disk radius must be positive. The solver supports square doubly
+periodic dynamics and the `periodic_x` cylinder geometry; separate display
+lengths make the plotting tools usable with rectangular trajectory data too.
 
 ## Configuration figures
 
@@ -86,6 +91,9 @@ DIAGNOSTICS_FIGURE = RUN_DIRECTORY / 'figures/diagnostics_excerpt.pdf'
 `TIME_RANGE` and `FRAME_RANGE` are inclusive and either bound may be `None`. A rolling window of one
 (the default) plots the saved data unchanged. Dipole counts remain unsmoothed
 step plots.
+
+The linear impulses are displayed for `infinite`, `periodic_x`, and
+`periodic`; angular impulse is displayed for `infinite` and `disk`.
 
 ## Movies
 

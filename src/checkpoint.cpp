@@ -51,10 +51,11 @@ void writeCheckpoint(const std::filesystem::path &directory, const VortexSystem 
         output << "event_index " << progress.eventIndex << '\n';
         output << "core_radius " << params.coreRadius << '\n';
         output << "integrator " << toString(params.integrator) << '\n';
-        const double geometryLengthX = params.boundaryCondition == "periodic"
-                                           ? params.boxLengthX
-                                           : (params.boundaryCondition == "disk" ? params.diskRadius
-                                                                                 : 0.0);
+        const bool periodicX =
+            params.boundaryCondition == "periodic" || params.boundaryCondition == "periodic_x";
+        const double geometryLengthX =
+            periodicX ? params.boxLengthX
+                      : (params.boundaryCondition == "disk" ? params.diskRadius : 0.0);
         const double geometryLengthY =
             params.boundaryCondition == "periodic" ? params.boxLengthY : 0.0;
         const int imageLayers =

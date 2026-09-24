@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-enum class InitialGeometry { infinite, periodic, disk };
+enum class InitialGeometry { infinite, periodic_x, periodic, disk };
 enum class InitialPattern { random, single, corotatingPair, dipole, ring };
 
 struct InitialConditionOptions {

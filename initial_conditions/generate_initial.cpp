@@ -11,7 +11,7 @@ namespace {
     std::ostream &out = status == 0 ? std::cout : std::cerr;
     out << "Usage: point_vortex_initial --geometry GEOMETRY --case CASE --output FILE [options]\n"
            "\n"
-           "Geometries: infinite, periodic, disk\n"
+           "Geometries: infinite, periodic_x, periodic, disk\n"
            "Cases:      random, single, pair, dipole, ring\n"
            "\n"
            "Options:\n"
@@ -19,8 +19,8 @@ namespace {
            "  --seed N                  Random seed (default 1234567)\n"
            "  --min-separation D        Reject pairs closer than D (default 0)\n"
            "  --circulation G           Absolute circulation (default 1)\n"
-           "  --half-width L            Infinite random square [-L,L]^2 (default 1)\n"
-           "  --box-length L            Periodic square side length (default 2)\n"
+           "  --half-width L            Unbounded-direction random extent (default 1)\n"
+           "  --box-length L            Periodic length (default 2)\n"
            "  --disk-radius R            Disk radius (default 1)\n"
            "  --ring-radius R            Ring radius; 0 selects an automatic value\n"
            "  --overwrite                Permit replacing FILE\n"
@@ -55,11 +55,13 @@ std::string nextArgument(int &index, int argc, char **argv) {
 InitialGeometry parseGeometry(const std::string &value) {
     if (value == "infinite")
         return InitialGeometry::infinite;
+    if (value == "periodic_x")
+        return InitialGeometry::periodic_x;
     if (value == "periodic")
         return InitialGeometry::periodic;
     if (value == "disk")
         return InitialGeometry::disk;
-    throw std::invalid_argument("--geometry must be infinite, periodic, or disk");
+    throw std::invalid_argument("--geometry must be infinite, periodic_x, periodic, or disk");
 }
 
 InitialPattern parsePattern(const std::string &value) {

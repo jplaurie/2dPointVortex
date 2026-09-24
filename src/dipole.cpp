@@ -43,7 +43,9 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
     if (!params_.dipoleRemoval || vortices.size() == 0)
         return 0;
 
-    const bool periodic = params_.boundaryCondition == "periodic";
+    const bool periodicX =
+        params_.boundaryCondition == "periodic" || params_.boundaryCondition == "periodic_x";
+    const bool periodicY = params_.boundaryCondition == "periodic";
     const double thresholdSquared = params_.dipoleRemovalDistance * params_.dipoleRemovalDistance;
     std::vector<Candidate> candidates;
     for (std::size_t i = 0; i < vortices.size(); ++i) {
@@ -54,9 +56,9 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
                 std::signbit(vortices.circulation[i]) == std::signbit(vortices.circulation[j]))
                 continue;
             const double dx =
-                displacement(vortices.x[i] - vortices.x[j], params_.boxLengthX, periodic);
+                displacement(vortices.x[i] - vortices.x[j], params_.boxLengthX, periodicX);
             const double dy =
-                displacement(vortices.y[i] - vortices.y[j], params_.boxLengthY, periodic);
+                displacement(vortices.y[i] - vortices.y[j], params_.boxLengthY, periodicY);
             const double distanceSquared = dx * dx + dy * dy;
             if (distanceSquared < thresholdSquared)
                 candidates.push_back({i, j, distanceSquared});

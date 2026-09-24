@@ -82,19 +82,20 @@ void SimParams::validate() const {
         throw std::invalid_argument("invalid timestep bounds");
     if (numThreads < 0)
         throw std::invalid_argument("numThreads must be non-negative");
-    if (boundaryCondition != "infinite" && boundaryCondition != "periodic" &&
-        boundaryCondition != "disk")
+    if (boundaryCondition != "infinite" && boundaryCondition != "periodic_x" &&
+        boundaryCondition != "periodic" && boundaryCondition != "disk")
         throw std::invalid_argument("invalid boundaryCondition");
     if (!(boxLengthX > 0.0) || !(boxLengthY > 0.0) || !(diskRadius > 0.0) ||
         periodicImageLayers < 0 || periodicImageLayers > 64)
         throw std::invalid_argument("invalid geometry parameters or periodicImageLayers > 64");
     if (boundaryCondition != "infinite" && coreRadius != 0.0)
-        throw std::invalid_argument("periodic and disk boundaries currently require coreRadius 0");
+        throw std::invalid_argument("non-infinite geometries currently require coreRadius 0");
     if (!(dipoleRemovalDistance > 0.0))
         throw std::invalid_argument("dipoleRemovalDistance must be positive");
     if (!dipoleRemoval && dipoleReinjection != ReinjectionMode::none)
         throw std::invalid_argument("dipoleReinjection requires dipoleRemoval true");
-    if (boundaryCondition == "infinite" && dipoleReinjection != ReinjectionMode::none)
+    if (boundaryCondition != "periodic" && boundaryCondition != "disk" &&
+        dipoleReinjection != ReinjectionMode::none)
         throw std::invalid_argument(
             "dipole reinjection is available only for periodic and disk geometries");
     if (boundaryCondition == "periodic" &&

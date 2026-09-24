@@ -442,3 +442,12 @@ dependencies are installed.
 - Periodic dynamics currently requires a square, zero-net-circulation domain.
 - Core regularization is available only for the infinite plane.
 - Singular encounters, disk-boundary violations, and non-finite states stop the run.
+
+## License and citation
+
+Copyright (c) 2022–2026 Jason Laurie. This project is distributed under the
+[BSD 3-Clause License](LICENSE). Third-party dependencies remain subject to
+their own license terms.
+
+If this software contributes to research or a publication, please cite it
+using the metadata in [`CITATION.cff`](CITATION.cff).

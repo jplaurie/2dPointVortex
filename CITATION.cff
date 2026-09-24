@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata in this file."
+title: "2D Point Vortex solver"
+type: software
+authors:
+  - family-names: Laurie
+    given-names: Jason
+    orcid: "https://orcid.org/0000-0002-3621-6052"
+abstract: "A C++20 solver for two-dimensional point-vortex dynamics in the infinite plane, a periodic box, and a circular disk, with CPU, MPI, and CUDA backends."
+repository-code: "https://github.com/jplaurie/2dPointVortex"
+url: "https://github.com/jplaurie/2dPointVortex"
+license: BSD-3-Clause
+keywords:
+  - point vortices
+  - vortex dynamics
+  - Hamiltonian dynamics
+  - fluid dynamics

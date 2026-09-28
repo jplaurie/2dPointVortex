@@ -47,6 +47,7 @@ In a simulation parameter file, select the same geometry and domain size:
 boundaryCondition periodic
 boxLengthX 2.0
 boxLengthY 2.0
+initialCondition file
 initialConditionFile data/initial_n400.dat
 ```
 

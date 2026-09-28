@@ -18,7 +18,8 @@ def run(command, directory, geometry, rows, end, integrator='rk4'):
     initial.write_text(''.join(f'{x:.17g} {y:.17g} {gamma:.17g}\n' for x, y, gamma in rows))
     params = directory / 'run.params'
     params.write_text(
-        f'initialConditionFile {initial}\nboundaryCondition {geometry}\n'
+        f'initialCondition file\ninitialConditionFile {initial}\n'
+        f'boundaryCondition {geometry}\n'
         f'endTime {end}\nintegrator {integrator}\ntimeStep 0.001\noutputTime 0.002\n'
         'diagnosticsTime 0.001\ncheckpointTime 0.003\nnumThreads 2\n'
         f'runDirectory {directory}\n')

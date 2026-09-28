@@ -1,6 +1,7 @@
 # Run from the repository root; output directories are created automatically.
 # Two opposite-sign vortices on the built-in unit-radius ring.
 N 2
+initialCondition ring
 boundaryCondition infinite
 coreRadius 0
 integrator rk4

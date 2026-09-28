@@ -90,9 +90,20 @@ def main(command):
 
             # Version 4 has only the shared next-output clock.
             old = root / (integrator + '_v4.dat')
-            old.write_text('\n'.join(line.replace('POINT_VORTEX_CHECKPOINT 6', 'POINT_VORTEX_CHECKPOINT 4')
-                                     for line in (common / 'checkpoints/checkpoint_00000001.dat').read_text().splitlines()
-                                     if not line.startswith(('output_schedule ', 'event_index '))) + '\n')
+            old_lines = []
+            for line in (common / 'checkpoints/checkpoint_00000001.dat').read_text().splitlines():
+                if line.startswith(('output_schedule ', 'dipole_schedule ', 'event_index ')):
+                    continue
+                line = line.replace('POINT_VORTEX_CHECKPOINT 8',
+                                    'POINT_VORTEX_CHECKPOINT 4')
+                if line.startswith('dipole_config '):
+                    fields = line.split()
+                    line = ' '.join([*fields[:3], fields[-1]])
+                if line.startswith('dipole_counts '):
+                    fields = line.split()
+                    line = ' '.join([*fields[:2], fields[-1]])
+                old_lines.append(line)
+            old.write_text('\n'.join(old_lines) + '\n')
             legacy, _ = run(integrator + '_legacy', f'restartFile {old}\n', integrator)
             check_times(csv_times(legacy / 'trajectory.csv'), [.04, .08, .12, .13])
             check_times(csv_times(legacy / 'diagnostics.csv'), [.04, .08, .12, .13])
@@ -102,6 +113,10 @@ def main(command):
             for value in ('0', '-1', 'nan', 'inf'):
                 _, result = run(key + value, f'{key} {value}\n', success=False)
                 assert 'error:' in result.stderr
+        for value in ('-1', 'nan', 'inf'):
+            _, result = run('dipole_interval_' + value,
+                            f'dipoleRemovalInterval {value}\n', success=False)
+            assert 'error:' in result.stderr
 
         _, result = run('legacy_output_key', 'outputFile obsolete.csv\n', success=False)
         assert 'unknown parameter: outputFile' in result.stderr
@@ -121,8 +136,83 @@ def main(command):
 
         malformed = root / 'malformed.dat'
         malformed.write_text('not a vortex\n0 0 1\n')
-        _, result = run('malformed', f'initialConditionFile {malformed}\n', success=False)
+        _, result = run('malformed',
+                        f'initialCondition file\ninitialConditionFile {malformed}\n',
+                        success=False)
         assert 'invalid initial condition on line 1' in result.stderr
+
+        outside = root / 'outside.dat'
+        outside.write_text('0 0 1\n1.01 0 -1\n')
+        _, result = run('outside_disk',
+                        'boundaryCondition disk\ndiskRadius 1\ninitialCondition file\n'
+                        f'initialConditionFile {outside}\n', success=False)
+        assert 'disk vortex lies on or outside the boundary' in result.stderr
+
+        outside.write_text('-0.5 0 1\n0.5 0 -1\n')
+        _, result = run('outside_periodic',
+                        'boundaryCondition periodic\nboxLengthX 1\nboxLengthY 1\n'
+                        'initialCondition file\n'
+                        f'initialConditionFile {outside}\n', success=False)
+        assert 'periodic vortex lies outside the fundamental box' in result.stderr
+
+        # A physical-time dipole cadence is independent of all output clocks and
+        # is saved after being advanced, so restarts preserve the next event.
+        scheduled, _ = run(
+            'dipole_schedule',
+            'dipoleRemoval true\ndipoleRemovalInterval 0.03\ncheckpointTime 0.05\n')
+        schedule_line = next(
+            line for line in
+            (scheduled / 'checkpoints/checkpoint_00000001.dat').read_text().splitlines()
+            if line.startswith('dipole_schedule '))
+        _, interval, next_removal = schedule_line.split()
+        assert math.isclose(float(interval), 0.03)
+        assert math.isclose(float(next_removal), 0.06)
+        scheduled_restart, _ = run(
+            'dipole_schedule_restart',
+            'dipoleRemoval true\ndipoleRemovalInterval 0.03\ncheckpointTime 0.05\n'
+            f'restartFile {scheduled}/checkpoints/checkpoint_00000001.dat\n')
+        schedule_line = next(
+            line for line in
+            (scheduled_restart / 'checkpoints/checkpoint_00000002.dat').read_text().splitlines()
+            if line.startswith('dipole_schedule '))
+        _, interval, next_removal = schedule_line.split()
+        assert math.isclose(float(interval), 0.03)
+        assert math.isclose(float(next_removal), 0.12)
+
+        upper_initial = root / 'upper-removal.dat'
+        upper_initial.write_text('0 0 1\n0.1 0 1\n10 0 -1\n10.1 0 -1\n')
+        upper_removed, _ = run(
+            'upper_removal',
+            'initialCondition file\n'
+            f'initialConditionFile {upper_initial}\n'
+            'dipoleRemoval true\ndipoleRemovalDistance 0.01\n'
+            'dipoleRemovalUpper true\ndipoleRemovalUpperDistance 5\nendTime 0\n')
+        assert csv_times(upper_removed / 'trajectory.csv') == []
+        with (upper_removed / 'diagnostics.csv').open() as stream:
+            rows = list(csv.DictReader(stream))
+        assert len(rows) == 1 and int(rows[0]['removed_pairs']) == 2
+        assert int(rows[0]['removed_upper_pairs']) == 2
+
+        # The solver's built-in random selection must honor each bounded domain.
+        periodic_random, _ = run(
+            'periodic_random',
+            'N 20\nboundaryCondition periodic\nboxLengthX 1\nboxLengthY 1\n'
+            'initialCondition random\nendTime 0\n')
+        with (periodic_random / 'trajectory.csv').open() as stream:
+            rows = list(csv.DictReader(stream))
+        assert len(rows) == 20
+        assert all(-0.5 <= float(row['x']) < 0.5 and
+                   -0.5 <= float(row['y']) < 0.5 for row in rows)
+
+        disk_random, _ = run(
+            'disk_random',
+            'N 20\nboundaryCondition disk\ndiskRadius 0.75\n'
+            'initialCondition random\nendTime 0\n')
+        with (disk_random / 'trajectory.csv').open() as stream:
+            rows = list(csv.DictReader(stream))
+        assert len(rows) == 20
+        assert all(float(row['x']) ** 2 + float(row['y']) ** 2 < 0.75 ** 2
+                   for row in rows)
 
         # End times differing from a scheduled output only by roundoff need one final frame.
         rounded, _ = run('rounded', 'endTime 0.1200000000000001\n')
@@ -142,7 +232,7 @@ def main(command):
 
         initial = root / 'removed.dat'
         initial.write_text('0 0 1\n0.001 0 -1\n')
-        removed, _ = run('removed', f'initialConditionFile {initial}\n'
+        removed, _ = run('removed', f'initialCondition file\ninitialConditionFile {initial}\n'
                          'dipoleRemoval true\ndipoleRemovalDistance 0.01\n'
                          'diagnosticsTime 0.03\ncheckpointTime 0.05\n')
         assert csv_times(removed / 'trajectory.csv') == []

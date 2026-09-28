@@ -160,6 +160,7 @@ contain whitespace. Invalid or unknown settings stop the run rather than being i
 ```text
 # Minimal two-vortex run
 N 2
+initialCondition dipole
 boundaryCondition infinite
 integrator rk4
 timeStep 0.001
@@ -172,7 +173,8 @@ Most-used settings:
 
 | Setting | Values / default | Purpose |
 |---|---|---|
-| `N` | `100` | Built-in initial population; ignored for file/checkpoint input |
+| `initialCondition` | `ring` | `random`, `ring`, `single`, `dipole`, or `file` |
+| `N` | `100` | Population for `random`/`ring`; ignored for fixed, file, and checkpoint input |
 | `boundaryCondition` | `infinite` | `infinite`, `periodic_x`, `periodic`, or `disk` |
 | `integrator` | `dopri5` | `rk4` or adaptive `dopri5` |
 | `timeStep`, `endTime` | `0.001`, `1.0` | Initial/fixed step and final simulation time |
@@ -180,7 +182,13 @@ Most-used settings:
 | `diagnosticsTime`, `checkpointTime` | `outputTime` | Optional independent output intervals |
 | `coreRadius` | `0.0` | Infinite-plane regularization radius |
 | `numThreads` | `0` | OpenMP thread count; zero defers to the runtime |
-| `initialConditionFile` | unset | File with `x y circulation` rows |
+| `initialConditionFile` | unset | Required when `initialCondition file`; contains `x y circulation` rows |
+| `dipoleRemoval` | `false` | Enable dipole-removal events |
+| `dipoleRemovalDistance` | `0.01` | Lower separation cutoff |
+| `dipoleRemovalInterval` | `0.0` | Zero checks every accepted step; positive values set an independent time interval |
+| `dipoleRemovalUpper` | `false` | Also remove closest-first matched dipoles above the upper distance |
+| `dipoleRemovalUpperDistance` | `1.0` | Upper separation cutoff; must exceed `dipoleRemovalDistance` |
+| `dipoleReinjection` | `none` | `none`, `independent`, or `paired`; bounded domains only |
 | `restartFile` | unset | Checkpoint to restore; overrides the initial condition |
 | `runDirectory` | `runs/default` | Self-contained output root for this simulation |
 | `overwriteRun` | `false` | Replace this directory's managed solver output |
@@ -348,10 +356,19 @@ center.
 
 There is no continuous forcing or viscous damping term in these ODEs.
 `dipoleRemoval`, `dipoleRemovalDistance`, and `dipoleReinjection` instead
-define discrete population events after accepted timesteps. Those events can
-change circulation moments and the Hamiltonian; they are recorded in the
-diagnostics and should not be interpreted as part of the conservative
-point-vortex equations.
+define discrete population events. `dipoleRemovalInterval` selects their
+schedule: zero checks after every accepted timestep, while a positive value
+uses an independent physical-time interval. The integrator lands exactly on
+scheduled removal times. These events can change circulation moments and the
+Hamiltonian; they are recorded in the diagnostics and should not be interpreted
+as part of the conservative point-vortex equations.
+
+When `dipoleRemovalUpper` is enabled, the closest-first matching also removes
+opposite-sign pairs farther apart than `dipoleRemovalUpperDistance`. This models
+large-scale dissipation when like-signed vortices have clustered into separated
+regions. The same `dipoleReinjection` setting applies to lower- and upper-cutoff
+events. Diagnostics report their combined count in `removed_pairs` and the
+upper-cutoff subset in `removed_upper_pairs`.
 
 Without removal events, circulation and Hamiltonian are reported for every
 geometry. The diagnostics additionally treat both linear impulses as relevant
@@ -362,8 +379,12 @@ select the geometry-appropriate subset.
 
 ## Initial conditions
 
+Built-in initial conditions are geometry-aware. `random` samples inside the periodic box or disk
+(and uses finite sampling extents in unbounded directions), while `ring`, `single`, and `dipole`
+use geometry-appropriate scales. Every generated state is checked against the selected domain.
+
 Provide a plain text file with one `x y circulation` row per vortex (whitespace or commas are
-accepted), then set `initialConditionFile`:
+accepted), then select `file` and set `initialConditionFile`:
 
 ```text
 # initial.dat
@@ -372,8 +393,13 @@ accepted), then set `initialConditionFile`:
 ```
 
 ```text
+initialCondition file
 initialConditionFile initial.dat
 ```
+
+File-loaded states are validated as well: periodic coordinates must lie in the fundamental box,
+disk coordinates must lie strictly inside the circle, and fully periodic states must have zero
+total circulation. Invalid input stops before the run begins.
 
 Or build and use the generator:
 

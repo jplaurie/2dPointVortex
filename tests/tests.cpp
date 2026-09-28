@@ -85,9 +85,13 @@ void checkpointTest() {
     const auto state = pair();
     const auto initial = computeInvariants(state);
     SimParams parameters;
+    parameters.dipoleRemoval = true;
+    parameters.dipoleRemovalInterval = 0.25;
+    parameters.dipoleRemovalUpper = true;
+    parameters.dipoleRemovalUpperDistance = 0.5;
     const DipoleEventState dipoleState = DipoleManager(parameters).state();
     const OutputSchedule schedule{0.1, 0.2, 0.5, 1.4, 1.5};
-    const CheckpointProgress progress{1.25, 0.0125, 1.3, 42, 7, 9};
+    const CheckpointProgress progress{1.25, 0.0125, 1.3, 42, 7, 9, 1.5};
     writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule,
                     progress);
     const auto restored = loadCheckpoint(checkpointPath(directory, 7));
@@ -108,7 +112,11 @@ void checkpointTest() {
         throw std::runtime_error("checkpoint counters failed");
     if (restored.boundaryCondition != "infinite" || restored.periodicImageLayers != 0)
         throw std::runtime_error("checkpoint geometry failed");
-    if (restored.dipoleRemoval || restored.dipoleReinjection != ReinjectionMode::none ||
+    if (!restored.dipoleRemoval || !restored.hasDipoleSchedule ||
+        restored.dipoleRemovalInterval != 0.25 || restored.nextDipoleRemovalTime != 1.5 ||
+        !restored.hasDipoleUpperConfig || !restored.dipoleRemovalUpper ||
+        restored.dipoleRemovalUpperDistance != 0.5 ||
+        restored.dipoleReinjection != ReinjectionMode::none ||
         restored.dipoleState.randomEngineState != dipoleState.randomEngineState)
         throw std::runtime_error("checkpoint dipole state failed");
     bool refusedOverwrite = false;
@@ -212,6 +220,53 @@ void dipoleRemovalTest() {
     const auto events = manager.state();
     if (events.removedPairs != 1 || events.reinjectedPairs != 0)
         throw std::runtime_error("dipole removal counters failed");
+}
+void upperDipoleRemovalTest() {
+    SimParams disabled;
+    disabled.dipoleRemoval = true;
+    disabled.dipoleRemovalDistance = 0.05;
+    disabled.dipoleRemovalUpperDistance = 5.0;
+    VortexSystem separated(4);
+    separated.x = {0.0, 0.1, 10.0, 10.1};
+    separated.y = {0.0, 0.0, 0.0, 0.0};
+    separated.circulation = {1.0, 1.0, -1.0, -1.0};
+    DipoleManager disabledManager(disabled);
+    if (disabledManager.process(separated) != 0 || separated.size() != 4)
+        throw std::runtime_error("disabled upper dipole removal failed");
+
+    SimParams enabled = disabled;
+    enabled.dipoleRemovalUpper = true;
+    DipoleManager enabledManager(enabled);
+    if (enabledManager.process(separated) != 2 || separated.size() != 0)
+        throw std::runtime_error("upper dipole removal failed");
+    if (enabledManager.state().removedUpperPairs != 2)
+        throw std::runtime_error("upper dipole removal counter failed");
+
+    // The short intermediate pair is retained and reserves its members; the
+    // remaining closest-first pair lies above the upper cutoff and is removed.
+    VortexSystem mixed(4);
+    mixed.x = {0.0, 100.0, 1.0, 110.0};
+    mixed.y = {0.0, 0.0, 0.0, 0.0};
+    mixed.circulation = {1.0, 1.0, -1.0, -1.0};
+    DipoleManager mixedManager(enabled);
+    if (mixedManager.process(mixed) != 1 || mixed.size() != 2 || mixed.x[0] != 0.0 ||
+        mixed.x[1] != 1.0 || mixedManager.state().removedUpperPairs != 1)
+        throw std::runtime_error("upper dipole closest-first matching failed");
+
+    SimParams reinjected = enabled;
+    reinjected.boundaryCondition = "periodic";
+    reinjected.boxLengthX = reinjected.boxLengthY = 2.0;
+    reinjected.dipoleRemovalUpperDistance = 0.5;
+    reinjected.dipoleReinjection = ReinjectionMode::paired;
+    VortexSystem periodic(2);
+    periodic.x = {-0.4, 0.4};
+    periodic.y = {0.0, 0.0};
+    periodic.circulation = {1.0, -1.0};
+    DipoleManager reinjectionManager(reinjected);
+    if (reinjectionManager.process(periodic) != 1 || periodic.size() != 2 ||
+        reinjectionManager.state().removedUpperPairs != 1 ||
+        reinjectionManager.state().reinjectedPairs != 1)
+        throw std::runtime_error("upper dipole reinjection failed");
 }
 void periodicReinjectionTest() {
     SimParams parameters;
@@ -445,6 +500,7 @@ int main() {
         geometryTests();
         periodicInitializationTest();
         dipoleRemovalTest();
+        upperDipoleRemovalTest();
         periodicReinjectionTest();
         periodicXDipoleRemovalTest();
         diskReinjectionTest();

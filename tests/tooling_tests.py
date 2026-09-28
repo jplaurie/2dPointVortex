@@ -46,7 +46,8 @@ def main(build):
             checked([build / 'point_vortex_initial', '--geometry', geometry, '--case', 'random',
                      '--count', '6', '--min-separation', '.05', '--output', initial])
             params = root / (geometry + '.params')
-            params.write_text(f'boundaryCondition {geometry}\ninitialConditionFile {initial}\n'
+            params.write_text(f'boundaryCondition {geometry}\ninitialCondition file\n'
+                              f'initialConditionFile {initial}\n'
                               'integrator rk4\ntimeStep 0.00001\nendTime 0.00002\noutputTime 0.00001\n'
                               'numThreads 1\n'
                               f'runDirectory {directory}\n')

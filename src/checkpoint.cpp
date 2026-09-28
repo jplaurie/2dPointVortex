@@ -12,7 +12,7 @@
 #endif
 namespace {
 constexpr const char *checkpointMagic = "POINT_VORTEX_CHECKPOINT";
-constexpr unsigned checkpointVersion = 6;
+constexpr unsigned checkpointVersion = 8;
 } // namespace
 std::filesystem::path checkpointPath(const std::filesystem::path &directory,
                                      std::size_t outputIndex) {
@@ -46,6 +46,8 @@ void writeCheckpoint(const std::filesystem::path &directory, const VortexSystem 
                << outputSchedule.diagnosticsInterval << ' ' << outputSchedule.checkpointInterval
                << ' ' << outputSchedule.nextDiagnosticsTime << ' '
                << outputSchedule.nextCheckpointTime << '\n';
+        output << "dipole_schedule " << params.dipoleRemovalInterval << ' '
+               << progress.nextDipoleRemovalTime << '\n';
         output << "accepted_steps " << progress.acceptedSteps << '\n';
         output << "output_index " << progress.outputIndex << '\n';
         output << "event_index " << progress.eventIndex << '\n';
@@ -63,9 +65,11 @@ void writeCheckpoint(const std::filesystem::path &directory, const VortexSystem 
         output << "geometry " << params.boundaryCondition << ' ' << geometryLengthX << ' '
                << geometryLengthY << ' ' << imageLayers << '\n';
         output << "dipole_config " << params.dipoleRemoval << ' '
-               << params.dipoleRemovalDistance << ' ' << toString(params.dipoleReinjection) << '\n';
-        output << "dipole_counts " << dipoleState.removedPairs << ' ' << dipoleState.reinjectedPairs
-               << '\n';
+               << params.dipoleRemovalDistance << ' ' << params.dipoleRemovalUpper << ' '
+               << params.dipoleRemovalUpperDistance << ' '
+               << toString(params.dipoleReinjection) << '\n';
+        output << "dipole_counts " << dipoleState.removedPairs << ' '
+               << dipoleState.removedUpperPairs << ' ' << dipoleState.reinjectedPairs << '\n';
         output << "random_engine_state " << dipoleState.randomEngineState << '\n';
         output << "initial_invariants " << initialInvariants.circulation << ' '
                << initialInvariants.linearImpulseX << ' ' << initialInvariants.linearImpulseY << ' '
@@ -141,6 +145,11 @@ Checkpoint loadCheckpoint(const std::filesystem::path &filename) {
             schedule.nextCheckpointTime;
         c.hasOutputSchedule = true;
     }
+    if (fileVersion >= 7) {
+        require("dipole_schedule");
+        input >> c.dipoleRemovalInterval >> c.nextDipoleRemovalTime;
+        c.hasDipoleSchedule = true;
+    }
     require("accepted_steps");
     c.acceptedSteps = readSize();
     require("output_index");
@@ -168,13 +177,20 @@ Checkpoint loadCheckpoint(const std::filesystem::path &filename) {
     if (fileVersion >= 3) {
         std::string reinjection;
         require("dipole_config");
-        input >> c.dipoleRemoval >> c.dipoleRemovalDistance >> reinjection;
+        input >> c.dipoleRemoval >> c.dipoleRemovalDistance;
+        if (fileVersion >= 8) {
+            input >> c.dipoleRemovalUpper >> c.dipoleRemovalUpperDistance;
+            c.hasDipoleUpperConfig = true;
+        }
+        input >> reinjection;
         const auto mode = reinjectionFromString(reinjection);
         if (!mode)
             throw std::runtime_error("unsupported checkpoint reinjection mode: " + reinjection);
         c.dipoleReinjection = *mode;
         require("dipole_counts");
         c.dipoleState.removedPairs = readSize();
+        if (fileVersion >= 8)
+            c.dipoleState.removedUpperPairs = readSize();
         c.dipoleState.reinjectedPairs = readSize();
         require("random_engine_state");
         std::getline(input >> std::ws, c.dipoleState.randomEngineState);
@@ -224,6 +240,19 @@ Checkpoint loadCheckpoint(const std::filesystem::path &filename) {
         ((!std::isfinite(c.dipoleRemovalDistance) || c.dipoleRemovalDistance <= 0.0) ||
          c.dipoleState.randomEngineState.empty()))
         throw std::runtime_error("checkpoint has invalid dipole-removal state");
+    if (fileVersion >= 8 &&
+        ((!std::isfinite(c.dipoleRemovalUpperDistance) ||
+          c.dipoleRemovalUpperDistance <= 0.0) ||
+         (c.dipoleRemovalUpper &&
+          (!c.dipoleRemoval ||
+           !(c.dipoleRemovalUpperDistance > c.dipoleRemovalDistance)))))
+        throw std::runtime_error("checkpoint has invalid upper dipole-removal state");
+    if (c.hasDipoleSchedule &&
+        (!std::isfinite(c.dipoleRemovalInterval) || c.dipoleRemovalInterval < 0.0 ||
+         (c.dipoleRemoval && c.dipoleRemovalInterval > 0.0 &&
+          (!std::isfinite(c.nextDipoleRemovalTime) ||
+           !(c.nextDipoleRemovalTime > c.time)))))
+        throw std::runtime_error("checkpoint has invalid dipole-removal schedule");
     for (const auto &invariants : {c.initialInvariants, c.segmentInvariants})
         for (double value :
              {invariants.circulation, invariants.linearImpulseX, invariants.linearImpulseY,
@@ -232,6 +261,8 @@ Checkpoint loadCheckpoint(const std::filesystem::path &filename) {
                 throw std::runtime_error("checkpoint contains non-finite invariants");
     if (c.dipoleState.reinjectedPairs > c.dipoleState.removedPairs)
         throw std::runtime_error("checkpoint has invalid dipole event counts");
+    if (c.dipoleState.removedUpperPairs > c.dipoleState.removedPairs)
+        throw std::runtime_error("checkpoint has invalid upper dipole event count");
     for (std::size_t i = 0; i < count; ++i)
         if (!std::isfinite(c.vortices.x[i]) || !std::isfinite(c.vortices.y[i]) ||
             !std::isfinite(c.vortices.circulation[i]))

@@ -1,9 +1,18 @@
 
 # Point-vortex example (select the geometry with boundaryCondition)
 N 400
+# Initial condition choices are random, ring, single, dipole, and file.
+# N controls random/ring; single and dipole always create one and two vortices.
+# Built-in conditions are generated inside the selected geometry. File input is
+# also checked against that geometry, including periodic neutrality.
+initialCondition random
+# For initialCondition file, provide a whitespace- or comma-separated file with
+# x, y, circulation per line. Leave this unset for every built-in condition.
+# initialCondition file
+# initialConditionFile initial.csv
 timeStep 0.001
-endTime 1.0
-outputTime 0.01
+endTime 100.0
+outputTime 1.0
 # Optional independent intervals; when omitted each follows outputTime.
 # diagnosticsTime 0.005
 # checkpointTime 0.1
@@ -25,16 +34,21 @@ periodicImageLayers 8
 randomSeed 1234567
 # diskRadius is used only by the disk geometry.
 diskRadius 1.0
-# Remove close opposite-sign pairs after every accepted timestep. Reinjection modes are
-# none, independent, or paired. Removal uses the minimum x image for periodic_x.
+# Remove opposite-sign pairs on the schedule selected below. Reinjection modes
+# are none, independent, or paired. Removal uses the minimum x image for periodic_x.
 # Reinjection is available only for the bounded periodic and disk domains.
 dipoleRemoval true
 # Full dipole separation threshold. In a disk this is the real/image distance;
 # the image is implicit and is not written as a second vortex.
 dipoleRemovalDistance 0.02
+# Optionally remove closest-first matched dipoles whose separation is larger
+# than this upper distance. Reinjection, when enabled, applies to them as well.
+dipoleRemovalUpper false
+dipoleRemovalUpperDistance 0.5
+# Zero checks after every accepted timestep. A positive value checks at that
+# physical-time interval, independently of outputTime; the solver lands exactly on it.
+dipoleRemovalInterval 0.0
 dipoleReinjection paired
-# Optional: a whitespace- or comma-separated file with x, y, circulation per line.
-# initialConditionFile initial.csv
 # Every solver run is self-contained. This is the default location; choose a new name for
 # each experiment. PointVortex writes trajectory.csv, diagnostics.csv, checkpoints/,
 # resolved_parameters.txt, and segments/ here.

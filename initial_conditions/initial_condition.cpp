@@ -23,11 +23,6 @@ void validateOptions(const InitialConditionOptions &options) {
         !(options.infiniteHalfWidth > 0.0) || !(options.boxLength > 0.0) ||
         !(options.diskRadius > 0.0) || !(options.ringRadius >= 0.0))
         throw std::invalid_argument("invalid initial-condition option");
-    if (options.geometry == InitialGeometry::periodic &&
-        ((options.pattern == InitialPattern::random || options.pattern == InitialPattern::ring)
-             ? options.count % 2 != 0
-             : options.pattern != InitialPattern::dipole))
-        throw std::invalid_argument("periodic initial condition must have zero circulation");
 }
 
 double distance(const VortexSystem &vortices, std::size_t first, std::size_t second,
@@ -211,6 +206,11 @@ void validateInitialCondition(const VortexSystem &vortices,
 
 VortexSystem generateInitialCondition(const InitialConditionOptions &options) {
     validateOptions(options);
+    if (options.geometry == InitialGeometry::periodic &&
+        ((options.pattern == InitialPattern::random || options.pattern == InitialPattern::ring)
+             ? options.count % 2 != 0
+             : options.pattern != InitialPattern::dipole))
+        throw std::invalid_argument("periodic initial condition must have zero circulation");
     VortexSystem vortices;
     if (options.pattern == InitialPattern::random)
         vortices = makeRandom(options);

@@ -20,6 +20,7 @@ struct CheckpointProgress {
     std::size_t acceptedSteps;
     std::size_t outputIndex;
     std::size_t eventIndex;
+    double nextDipoleRemovalTime = 0.0;
 };
 struct Checkpoint {
     // Restart state includes output/integrator progress as well as vortex data.
@@ -43,6 +44,12 @@ struct Checkpoint {
     int periodicImageLayers = 0;
     bool dipoleRemoval = false;
     double dipoleRemovalDistance = 0.0;
+    bool hasDipoleUpperConfig = false;
+    bool dipoleRemovalUpper = false;
+    double dipoleRemovalUpperDistance = 0.0;
+    bool hasDipoleSchedule = false;
+    double dipoleRemovalInterval = 0.0;
+    double nextDipoleRemovalTime = 0.0;
     ReinjectionMode dipoleReinjection = ReinjectionMode::none;
     DipoleEventState dipoleState;
 };

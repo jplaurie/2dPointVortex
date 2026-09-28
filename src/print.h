@@ -19,7 +19,7 @@ class DiagnosticsWriter {
     DiagnosticsWriter(const std::string &filename, const Invariants &initial, bool overwrite);
     void write(double time, std::size_t frame, const Invariants &values,
                const Invariants &segmentReference, std::size_t removedPairs,
-               std::size_t reinjectedPairs);
+               std::size_t removedUpperPairs, std::size_t reinjectedPairs);
 
   private:
     std::ofstream output_;
@@ -31,5 +31,5 @@ void writeRunProvenance(const SimParams &params, const std::string &parameterFil
 void printDiagnostics(double time, std::size_t steps, const Invariants &current,
                       const Invariants &initial, const std::string &boundaryCondition,
                       const Invariants &segmentReference, std::size_t removedPairs,
-                      std::size_t reinjectedPairs);
+                      std::size_t removedUpperPairs, std::size_t reinjectedPairs);
 #endif

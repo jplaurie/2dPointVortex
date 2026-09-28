@@ -8,6 +8,7 @@
 #include <string_view>
 enum class IntegratorKind : std::uint8_t { rk4, dopri5 };
 enum class ReinjectionMode : std::uint8_t { none, independent, paired };
+enum class InitialConditionKind : std::uint8_t { random, ring, single, dipole, file };
 [[nodiscard]] constexpr const char *toString(IntegratorKind kind) noexcept {
     return kind == IntegratorKind::rk4 ? "rk4" : "dopri5";
 }
@@ -15,6 +16,21 @@ enum class ReinjectionMode : std::uint8_t { none, independent, paired };
     return mode == ReinjectionMode::independent
                ? "independent"
                : (mode == ReinjectionMode::paired ? "paired" : "none");
+}
+[[nodiscard]] constexpr const char *toString(InitialConditionKind kind) noexcept {
+    switch (kind) {
+    case InitialConditionKind::random:
+        return "random";
+    case InitialConditionKind::ring:
+        return "ring";
+    case InitialConditionKind::single:
+        return "single";
+    case InitialConditionKind::dipole:
+        return "dipole";
+    case InitialConditionKind::file:
+        return "file";
+    }
+    return "unknown";
 }
 [[nodiscard]] constexpr std::optional<IntegratorKind>
 integratorFromString(std::string_view value) noexcept {
@@ -32,6 +48,20 @@ reinjectionFromString(std::string_view value) noexcept {
         return ReinjectionMode::independent;
     if (value == "paired")
         return ReinjectionMode::paired;
+    return std::nullopt;
+}
+[[nodiscard]] constexpr std::optional<InitialConditionKind>
+initialConditionFromString(std::string_view value) noexcept {
+    if (value == "random")
+        return InitialConditionKind::random;
+    if (value == "ring")
+        return InitialConditionKind::ring;
+    if (value == "single")
+        return InitialConditionKind::single;
+    if (value == "dipole")
+        return InitialConditionKind::dipole;
+    if (value == "file")
+        return InitialConditionKind::file;
     return std::nullopt;
 }
 struct SimParams {
@@ -64,12 +94,17 @@ struct SimParams {
     int periodicImageLayers = 8;
     std::uint64_t randomSeed = 1234567;
 
-    // Optional small-dipole removal and geometry-aware reinjection.
+    // Optional lower/upper dipole removal and geometry-aware reinjection.
     bool dipoleRemoval = false;
     double dipoleRemovalDistance = 0.01;
+    bool dipoleRemovalUpper = false;
+    double dipoleRemovalUpperDistance = 1.0;
+    // Zero processes after every accepted step; positive values use a time cadence.
+    double dipoleRemovalInterval = 0.0;
     ReinjectionMode dipoleReinjection = ReinjectionMode::none;
 
     // Input, restart, and managed-run paths.
+    InitialConditionKind initialCondition = InitialConditionKind::ring;
     std::string initialConditionFile;
     std::string restartFile;
     std::string runDirectory = "runs/default";

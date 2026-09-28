@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "checkpoint.h"
 #include "compute.h"
+#include "initial_condition.h"
 #include "print.h"
 #include "read.h"
 #include "timestep.h"
@@ -68,11 +69,34 @@ bool checkpointMatches(const Checkpoint &checkpoint, const SimParams &params) {
            checkpoint.dipoleRemoval == params.dipoleRemoval &&
            (!params.dipoleRemoval ||
             (checkpoint.dipoleRemovalDistance == params.dipoleRemovalDistance &&
+             ((!checkpoint.hasDipoleUpperConfig && !params.dipoleRemovalUpper) ||
+              (checkpoint.hasDipoleUpperConfig &&
+               checkpoint.dipoleRemovalUpper == params.dipoleRemovalUpper &&
+               (!params.dipoleRemovalUpper ||
+                checkpoint.dipoleRemovalUpperDistance ==
+                    params.dipoleRemovalUpperDistance))) &&
+             (!checkpoint.hasDipoleSchedule ||
+              checkpoint.dipoleRemovalInterval == params.dipoleRemovalInterval) &&
              checkpoint.dipoleReinjection == params.dipoleReinjection));
 }
 
+InitialConditionOptions initialConditionOptions(const SimParams &params) {
+    InitialConditionOptions options;
+    if (params.boundaryCondition == "periodic_x")
+        options.geometry = InitialGeometry::periodic_x;
+    else if (params.boundaryCondition == "periodic")
+        options.geometry = InitialGeometry::periodic;
+    else if (params.boundaryCondition == "disk")
+        options.geometry = InitialGeometry::disk;
+    options.count = std::max<std::size_t>(1, params.vortexCount);
+    options.seed = params.randomSeed;
+    options.boxLength = params.boxLengthX;
+    options.diskRadius = params.diskRadius;
+    return options;
+}
+
 VortexSystem makeInitialState(const SimParams &params) {
-    if (!params.initialConditionFile.empty()) {
+    if (params.initialCondition == InitialConditionKind::file) {
         const InitialConditionMetadata metadata =
             readInitialConditionMetadata(params.initialConditionFile);
         if (metadata.geometry && *metadata.geometry != params.boundaryCondition)
@@ -94,22 +118,37 @@ VortexSystem makeInitialState(const SimParams &params) {
                 1e-13 * std::max(*metadata.diskRadius, params.diskRadius))
             throw std::invalid_argument(
                 "initial-condition disk radius does not match simulation parameters");
-        return loadVortices(params.initialConditionFile);
-    }
-
-    VortexSystem vortices(params.vortexCount);
-    if (params.boundaryCondition == "periodic") {
-        initializePeriodicVortices(vortices, params.boxLengthX, params.boxLengthY,
-                                   params.randomSeed);
+        VortexSystem vortices = loadVortices(params.initialConditionFile);
+        InitialConditionOptions options = initialConditionOptions(params);
+        options.count = vortices.size();
+        validateInitialCondition(vortices, options);
         return vortices;
     }
 
-    // Keep the demonstration ring away from the disk wall.
-    double radius = 1.0;
-    if (params.boundaryCondition == "disk")
-        radius = 0.5 * params.diskRadius;
-    initializeVortices(vortices, radius);
-    return vortices;
+    InitialConditionOptions options = initialConditionOptions(params);
+
+    switch (params.initialCondition) {
+    case InitialConditionKind::random:
+        options.pattern = InitialPattern::random;
+        break;
+    case InitialConditionKind::ring:
+        options.pattern = InitialPattern::ring;
+        break;
+    case InitialConditionKind::single:
+        options.pattern = InitialPattern::single;
+        break;
+    case InitialConditionKind::dipole:
+        options.pattern = InitialPattern::dipole;
+        break;
+    case InitialConditionKind::file:
+        throw std::logic_error("file initial condition was not loaded");
+    }
+    // Preserve the historical unit-radius ring in the infinite plane. Other
+    // geometries use the generator's boundary-aware default radius.
+    if (params.initialCondition == InitialConditionKind::ring &&
+        params.boundaryCondition == "infinite")
+        options.ringRadius = 1.0;
+    return generateInitialCondition(options);
 }
 
 } // namespace
@@ -189,6 +228,18 @@ int main(int argc, char **argv) {
             nextTime(params.checkpointInterval(),
                      savedSchedule ? saved.checkpointInterval : params.outputTime,
                      savedSchedule ? saved.nextCheckpointTime : restart.nextOutputTime)};
+        double nextDipoleRemoval = 0.0;
+        if (params.dipoleRemoval && params.dipoleRemovalInterval > 0.0) {
+            const bool preserveDipoleSchedule =
+                restarting && restart.hasDipoleSchedule &&
+                restart.dipoleRemovalInterval == params.dipoleRemovalInterval;
+            nextDipoleRemoval = preserveDipoleSchedule
+                                     ? restart.nextDipoleRemovalTime
+                                     : time + params.dipoleRemovalInterval;
+            if (!std::isfinite(nextDipoleRemoval) || !(nextDipoleRemoval > time))
+                throw std::runtime_error(
+                    "dipole-removal interval cannot advance simulation time");
+        }
         std::size_t acceptedSteps = restarting ? restart.acceptedSteps : 0;
         // The filename index counts checkpoints, independently of CSV frames.
         std::size_t outputIndex = restarting ? restart.outputIndex : 0;
@@ -268,9 +319,11 @@ int main(int argc, char **argv) {
             const DipoleEventState eventState = dipoles.state();
             if (backendIsRoot()) {
                 diagnostics->write(time, eventIndex, current, segmentReference,
-                                   eventState.removedPairs, eventState.reinjectedPairs);
+                                   eventState.removedPairs, eventState.removedUpperPairs,
+                                   eventState.reinjectedPairs);
                 printDiagnostics(time, acceptedSteps, current, initial, params.boundaryCondition,
                                  segmentReference, eventState.removedPairs,
+                                 eventState.removedUpperPairs,
                                  eventState.reinjectedPairs);
             }
         };
@@ -280,7 +333,8 @@ int main(int argc, char **argv) {
                 checkCheckpointDestination(outputIndex);
                 writeCheckpoint(paths.checkpoints, vortices, initial, params, segmentReference,
                                 dipoles.state(), schedule,
-                                {time, dt, nextOutput, acceptedSteps, outputIndex, eventIndex});
+                                {time, dt, nextOutput, acceptedSteps, outputIndex, eventIndex,
+                                 nextDipoleRemoval});
             }
         };
 
@@ -311,12 +365,26 @@ int main(int argc, char **argv) {
             }
             return result;
         };
+        const auto advanceClock = [&](double &next, double interval) {
+            do {
+                const double following = next + interval;
+                if (!std::isfinite(following) || !(following > next))
+                    throw std::runtime_error(
+                        "scheduled interval cannot advance simulation time");
+                next = following;
+            } while (next <= time);
+        };
 
         while (time < params.endTime) {
-            // Land on the next event from any output stream, or the final time.
+            // Land on the next removal/output event, or the final time.
+            const double timeToDipoleRemoval =
+                params.dipoleRemoval && params.dipoleRemovalInterval > 0.0
+                    ? nextDipoleRemoval - time
+                    : std::numeric_limits<double>::infinity();
             const double stepSize =
                 std::min({dt, params.endTime - time, nextOutput - time,
-                          schedule.nextDiagnosticsTime - time, schedule.nextCheckpointTime - time});
+                          schedule.nextDiagnosticsTime - time,
+                          schedule.nextCheckpointTime - time, timeToDipoleRemoval});
             if (!(time + stepSize > time))
                 throw std::runtime_error("timestep cannot advance simulation time");
             const StepResult result = takeStep(stepSize);
@@ -329,9 +397,19 @@ int main(int argc, char **argv) {
             if (acceptedSteps == std::numeric_limits<std::size_t>::max())
                 throw std::runtime_error("accepted-step counter overflow");
             ++acceptedSteps;
-            if (deviceStepping && params.dipoleRemoval)
+
+            const double roundingSlack =
+                16.0 * std::numeric_limits<double>::epsilon() * std::abs(time);
+            const bool finalFrame = time + roundingSlack >= params.endTime;
+            if (finalFrame)
+                time = params.endTime; // Avoid two final frames separated only by roundoff.
+            const bool dipoleRemovalDue =
+                params.dipoleRemoval &&
+                (params.dipoleRemovalInterval == 0.0 ||
+                 time + roundingSlack >= nextDipoleRemoval);
+            if (deviceStepping && dipoleRemovalDue)
                 synchronizeDeviceState();
-            if (dipoles.process(vortices) != 0) {
+            if (dipoleRemovalDue && dipoles.process(vortices) != 0) {
                 integrator.invalidateCachedDerivative();
                 if (deviceStepping) {
                     kernel->uploadDeviceState(vortices);
@@ -340,30 +418,19 @@ int main(int argc, char **argv) {
                 }
                 segmentReference = computeInvariants(vortices, *kernel);
             }
+            if (dipoleRemovalDue && params.dipoleRemovalInterval > 0.0)
+                advanceClock(nextDipoleRemoval, params.dipoleRemovalInterval);
 
-            const double roundingSlack =
-                16.0 * std::numeric_limits<double>::epsilon() * std::abs(time);
-            const bool finalFrame = time + roundingSlack >= params.endTime;
-            if (finalFrame)
-                time = params.endTime; // Avoid two final frames separated only by roundoff.
             const bool trajectoryDue = time + roundingSlack >= nextOutput;
             const bool diagnosticsDue = time + roundingSlack >= schedule.nextDiagnosticsTime;
             const bool checkpointDue = time + roundingSlack >= schedule.nextCheckpointTime;
-            const auto advance = [&](double &next, double interval) {
-                do {
-                    const double following = next + interval;
-                    if (!std::isfinite(following) || !(following > next))
-                        throw std::runtime_error("output interval cannot advance simulation time");
-                    next = following;
-                } while (next <= time);
-            };
             // Advance every due clock before saving it, including coincident events.
             if (trajectoryDue)
-                advance(nextOutput, schedule.trajectoryInterval);
+                advanceClock(nextOutput, schedule.trajectoryInterval);
             if (diagnosticsDue)
-                advance(schedule.nextDiagnosticsTime, schedule.diagnosticsInterval);
+                advanceClock(schedule.nextDiagnosticsTime, schedule.diagnosticsInterval);
             if (checkpointDue)
-                advance(schedule.nextCheckpointTime, schedule.checkpointInterval);
+                advanceClock(schedule.nextCheckpointTime, schedule.checkpointInterval);
             if (trajectoryDue || diagnosticsDue || checkpointDue || finalFrame) {
                 if (eventIndex == std::numeric_limits<std::size_t>::max())
                     throw std::runtime_error("output event-frame counter overflow");

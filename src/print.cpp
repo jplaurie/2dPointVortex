@@ -47,12 +47,12 @@ DiagnosticsWriter::DiagnosticsWriter(const std::string &filename, const Invarian
            "delta_angular_impulse,delta_hamiltonian,segment_delta_circulation,"
            "segment_delta_linear_impulse_x,segment_delta_linear_impulse_y,"
            "segment_delta_angular_impulse,segment_delta_hamiltonian,removed_pairs,"
-           "reinjected_pairs\n";
+           "removed_upper_pairs,reinjected_pairs\n";
     output_.flush();
 }
 void DiagnosticsWriter::write(double time, std::size_t frame, const Invariants &value,
                               const Invariants &segmentReference, std::size_t removedPairs,
-                              std::size_t reinjectedPairs) {
+                              std::size_t removedUpperPairs, std::size_t reinjectedPairs) {
     output_ << time << ',' << frame << ',' << value.circulation << ',' << value.linearImpulseX
             << ',' << value.linearImpulseY << ',' << value.angularImpulse << ','
             << value.hamiltonian << ',' << value.circulation - initial_.circulation << ','
@@ -65,7 +65,7 @@ void DiagnosticsWriter::write(double time, std::size_t frame, const Invariants &
             << value.linearImpulseY - segmentReference.linearImpulseY << ','
             << value.angularImpulse - segmentReference.angularImpulse << ','
             << value.hamiltonian - segmentReference.hamiltonian << ',' << removedPairs << ','
-            << reinjectedPairs << '\n';
+            << removedUpperPairs << ',' << reinjectedPairs << '\n';
     output_.flush();
     if (!output_)
         throw std::runtime_error("failed while writing diagnostics output");
@@ -110,7 +110,11 @@ void writeRecord(const std::filesystem::path &path, const SimParams &params,
            << "randomSeed " << params.randomSeed << '\n'
            << "dipoleRemoval " << params.dipoleRemoval << '\n'
            << "dipoleRemovalDistance " << params.dipoleRemovalDistance << '\n'
+           << "dipoleRemovalUpper " << params.dipoleRemovalUpper << '\n'
+           << "dipoleRemovalUpperDistance " << params.dipoleRemovalUpperDistance << '\n'
+           << "dipoleRemovalInterval " << params.dipoleRemovalInterval << '\n'
            << "dipoleReinjection " << toString(params.dipoleReinjection) << '\n'
+           << "initialCondition " << toString(params.initialCondition) << '\n'
            << "initialConditionFile " << std::quoted(absolutePath(params.initialConditionFile))
            << '\n'
            << "trajectory_file " << std::quoted(absolutePath(paths.trajectory.string())) << '\n'
@@ -147,7 +151,7 @@ void writeRunProvenance(const SimParams &params, const std::string &parameterFil
 void printDiagnostics(double time, std::size_t steps, const Invariants &value,
                       const Invariants &initial, const std::string &boundaryCondition,
                       const Invariants &segmentReference, std::size_t removedPairs,
-                      std::size_t reinjectedPairs) {
+                      std::size_t removedUpperPairs, std::size_t reinjectedPairs) {
     std::cout << std::setprecision(10) << "time=" << time << " steps=" << steps
               << " circulation=" << value.circulation
               << " dCirculation=" << value.circulation - initial.circulation
@@ -169,6 +173,8 @@ void printDiagnostics(double time, std::size_t steps, const Invariants &value,
                   << " dL=" << value.angularImpulse - initial.angularImpulse
                   << " segmentDL=" << value.angularImpulse - segmentReference.angularImpulse;
     }
-    std::cout << " removedPairs=" << removedPairs << " reinjectedPairs=" << reinjectedPairs << '\n'
+    std::cout << " removedPairs=" << removedPairs
+              << " removedUpperPairs=" << removedUpperPairs
+              << " reinjectedPairs=" << reinjectedPairs << '\n'
               << std::flush;
 }

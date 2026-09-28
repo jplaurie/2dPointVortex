@@ -55,14 +55,17 @@ bool assignParameter(const std::string &key, SimParams &params,
 void SimParams::validate() const {
     for (double value : {timeStep, endTime, outputTime, coreRadius, absoluteTolerance,
                          relativeTolerance, minimumTimeStep, maximumTimeStep, boxLengthX,
-                         boxLengthY, diskRadius, dipoleRemovalDistance})
+                         boxLengthY, diskRadius, dipoleRemovalDistance,
+                         dipoleRemovalUpperDistance, dipoleRemovalInterval})
         if (!std::isfinite(value))
             throw std::invalid_argument("simulation parameters must be finite");
-    for (double radius : {coreRadius, diskRadius, dipoleRemovalDistance})
+    for (double radius :
+         {coreRadius, diskRadius, dipoleRemovalDistance, dipoleRemovalUpperDistance})
         if (!std::isfinite(radius * radius) || (radius > 0.0 && radius * radius == 0.0))
             throw std::invalid_argument(
                 "radius or distance is outside the supported numeric range");
-    if (vortexCount == 0 && initialConditionFile.empty() && restartFile.empty())
+    if (vortexCount == 0 && initialCondition != InitialConditionKind::file &&
+        restartFile.empty())
         throw std::invalid_argument("N must be positive");
     if (!(timeStep > 0.0))
         throw std::invalid_argument("timeStep must be positive");
@@ -92,6 +95,15 @@ void SimParams::validate() const {
         throw std::invalid_argument("non-infinite geometries currently require coreRadius 0");
     if (!(dipoleRemovalDistance > 0.0))
         throw std::invalid_argument("dipoleRemovalDistance must be positive");
+    if (!(dipoleRemovalUpperDistance > 0.0))
+        throw std::invalid_argument("dipoleRemovalUpperDistance must be positive");
+    if (dipoleRemovalUpper && !dipoleRemoval)
+        throw std::invalid_argument("dipoleRemovalUpper requires dipoleRemoval true");
+    if (dipoleRemovalUpper && !(dipoleRemovalUpperDistance > dipoleRemovalDistance))
+        throw std::invalid_argument(
+            "dipoleRemovalUpperDistance must exceed dipoleRemovalDistance");
+    if (!(dipoleRemovalInterval >= 0.0))
+        throw std::invalid_argument("dipoleRemovalInterval must be non-negative");
     if (!dipoleRemoval && dipoleReinjection != ReinjectionMode::none)
         throw std::invalid_argument("dipoleReinjection requires dipoleRemoval true");
     if (boundaryCondition != "periodic" && boundaryCondition != "disk" &&
@@ -103,6 +115,12 @@ void SimParams::validate() const {
         throw std::invalid_argument("Weiss-McWilliams periodic geometry requires a square box");
     if (runDirectory.empty())
         throw std::invalid_argument("runDirectory must not be empty");
+    if (initialCondition == InitialConditionKind::file && initialConditionFile.empty())
+        throw std::invalid_argument(
+            "initialCondition file requires initialConditionFile");
+    if (initialCondition != InitialConditionKind::file && !initialConditionFile.empty())
+        throw std::invalid_argument(
+            "initialConditionFile requires initialCondition file");
 }
 SimParams loadParams(const std::string &filename) {
     std::ifstream input(filename);
@@ -125,6 +143,8 @@ SimParams loadParams(const std::string &filename) {
         {"boxLengthY", &SimParams::boxLengthY},
         {"diskRadius", &SimParams::diskRadius},
         {"dipoleRemovalDistance", &SimParams::dipoleRemovalDistance},
+        {"dipoleRemovalUpperDistance", &SimParams::dipoleRemovalUpperDistance},
+        {"dipoleRemovalInterval", &SimParams::dipoleRemovalInterval},
     };
     static constexpr Parameter<std::optional<double>> optionalDoubles[] = {
         {"diagnosticsTime", &SimParams::diagnosticsTime},
@@ -174,12 +194,15 @@ SimParams loadParams(const std::string &filename) {
                 p.coreRadius = std::sqrt(parseDouble(value));
             else if (key == "randomSeed")
                 p.randomSeed = parseUnsigned(value);
-            else if (key == "dipoleRemoval" || key == "overwriteRun") {
+            else if (key == "dipoleRemoval" || key == "dipoleRemovalUpper" ||
+                     key == "overwriteRun") {
                 const bool enabled = value == "true" || value == "1";
                 if (!enabled && value != "false" && value != "0")
                     throw std::invalid_argument(key + " must be true or false");
                 if (key == "dipoleRemoval")
                     p.dipoleRemoval = enabled;
+                else if (key == "dipoleRemovalUpper")
+                    p.dipoleRemovalUpper = enabled;
                 else
                     p.overwriteRun = enabled;
             } else if (key == "dipoleReinjection") {
@@ -188,6 +211,12 @@ SimParams loadParams(const std::string &filename) {
                     throw std::invalid_argument(
                         "dipoleReinjection must be none, independent, or paired");
                 p.dipoleReinjection = *mode;
+            } else if (key == "initialCondition") {
+                const auto condition = initialConditionFromString(value);
+                if (!condition)
+                    throw std::invalid_argument(
+                        "initialCondition must be random, ring, single, dipole, or file");
+                p.initialCondition = *condition;
             } else if (key == "integrator") {
                 const auto integrator = integratorFromString(value);
                 if (!integrator)

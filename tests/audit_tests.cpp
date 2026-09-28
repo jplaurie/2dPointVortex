@@ -127,6 +127,12 @@ void invalidNumericTests() {
     params.dipoleRemoval = true;
     params.dipoleReinjection = ReinjectionMode::paired;
     rejects([&] { params.validate(); }, "singly periodic reinjection");
+    params = SimParams{};
+    params.dipoleRemovalUpper = true;
+    rejects([&] { params.validate(); }, "upper removal without dipole removal");
+    params.dipoleRemoval = true;
+    params.dipoleRemovalDistance = 2.0;
+    rejects([&] { params.validate(); }, "upper removal cutoff ordering");
     state.x[0] = std::numeric_limits<double>::quiet_NaN();
     VelocityField velocity;
     rejects([&] { plane.evaluate(state, velocity); }, "non-finite initial position");

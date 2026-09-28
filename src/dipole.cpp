@@ -19,6 +19,7 @@ struct RemovedEvent {
     double firstCirculation;
     double secondCirculation = 0.0;
     bool wallImage = false;
+    bool upperRemoval = false;
 };
 
 double displacement(double difference, double length, bool periodic) {
@@ -31,7 +32,8 @@ DipoleManager::DipoleManager(const SimParams &params)
 
 DipoleManager::DipoleManager(const SimParams &params, const DipoleEventState &state)
     : params_(params), random_(params.randomSeed ^ 0xd1b54a32d192ed03ULL),
-      removedPairs_(state.removedPairs), reinjectedPairs_(state.reinjectedPairs) {
+      removedPairs_(state.removedPairs), removedUpperPairs_(state.removedUpperPairs),
+      reinjectedPairs_(state.reinjectedPairs) {
     if (!state.randomEngineState.empty()) {
         std::istringstream input(state.randomEngineState);
         if (!(input >> random_))
@@ -47,6 +49,8 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
         params_.boundaryCondition == "periodic" || params_.boundaryCondition == "periodic_x";
     const bool periodicY = params_.boundaryCondition == "periodic";
     const double thresholdSquared = params_.dipoleRemovalDistance * params_.dipoleRemovalDistance;
+    const double upperThresholdSquared =
+        params_.dipoleRemovalUpperDistance * params_.dipoleRemovalUpperDistance;
     std::vector<Candidate> candidates;
     for (std::size_t i = 0; i < vortices.size(); ++i) {
         if (vortices.circulation[i] == 0.0)
@@ -60,7 +64,9 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
             const double dy =
                 displacement(vortices.y[i] - vortices.y[j], params_.boxLengthY, periodicY);
             const double distanceSquared = dx * dx + dy * dy;
-            if (distanceSquared < thresholdSquared)
+            // Upper-cutoff matching needs all separations so intermediate
+            // pairs reserve each other before more distant pairs are considered.
+            if (distanceSquared < thresholdSquared || params_.dipoleRemovalUpper)
                 candidates.push_back({i, j, distanceSquared});
         }
         if (params_.boundaryCondition == "disk") {
@@ -85,19 +91,30 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
                   return std::pair{left.first, left.second} < std::pair{right.first, right.second};
               });
 
+    std::vector<bool> matched(vortices.size(), false);
     std::vector<bool> selected(vortices.size(), false);
     std::vector<RemovedEvent> events;
     for (const Candidate &candidate : candidates) {
-        if (selected[candidate.first] ||
-            (candidate.second < vortices.size() && selected[candidate.second]))
+        const bool wallImage = candidate.second == vortices.size();
+        if (matched[candidate.first] || (!wallImage && matched[candidate.second]))
             continue;
+        matched[candidate.first] = true;
+        if (!wallImage)
+            matched[candidate.second] = true;
+
+        const bool lowerRemoval = candidate.distanceSquared < thresholdSquared;
+        const bool upperRemoval = !wallImage && params_.dipoleRemovalUpper &&
+                                  candidate.distanceSquared > upperThresholdSquared;
+        if (!lowerRemoval && !upperRemoval)
+            continue;
+
         selected[candidate.first] = true;
-        if (candidate.second < vortices.size()) {
+        if (!wallImage) {
             selected[candidate.second] = true;
             events.push_back({vortices.circulation[candidate.first],
-                              vortices.circulation[candidate.second], false});
+                              vortices.circulation[candidate.second], false, upperRemoval});
         } else {
-            events.push_back({vortices.circulation[candidate.first], 0.0, true});
+            events.push_back({vortices.circulation[candidate.first], 0.0, true, false});
         }
     }
     if (events.empty())
@@ -114,6 +131,9 @@ std::size_t DipoleManager::process(VortexSystem &vortices) {
     }
     vortices = std::move(survivors);
     removedPairs_ += events.size();
+    removedUpperPairs_ += static_cast<std::size_t>(
+        std::count_if(events.begin(), events.end(),
+                      [](const RemovedEvent &event) { return event.upperRemoval; }));
 
     if (params_.dipoleReinjection != ReinjectionMode::none) {
         for (const RemovedEvent &event : events) {
@@ -184,5 +204,5 @@ void DipoleManager::injectPair(VortexSystem &vortices, double firstCirculation,
 DipoleEventState DipoleManager::state() const {
     std::ostringstream output;
     output << random_;
-    return {removedPairs_, reinjectedPairs_, output.str()};
+    return {removedPairs_, reinjectedPairs_, output.str(), removedUpperPairs_};
 }

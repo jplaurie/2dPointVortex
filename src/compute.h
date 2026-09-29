@@ -14,6 +14,19 @@ struct StepResult {
     double normalizedError = 0.0;
     unsigned rejectedSteps = 0;
 };
+
+// Optional capability implemented by backends that keep integration state on a device.
+class DeviceStepper {
+  public:
+    virtual ~DeviceStepper() = default;
+    virtual void uploadState(const VortexSystem &) const = 0;
+    virtual void downloadState(VortexSystem &) const = 0;
+    virtual void evaluateState(VelocityField &) const = 0;
+    virtual void rk4Step(double) const = 0;
+    virtual StepResult dopri5Step(double, double, double, double, double) const = 0;
+    virtual void invalidateDerivative() const noexcept = 0;
+};
+
 // Geometry-independent right-hand side used by both time integrators.
 class VelocityKernel {
   public:
@@ -25,14 +38,6 @@ class VelocityKernel {
                                const std::vector<double> &circulation, VelocityField &velocity,
                                std::size_t begin, std::size_t end) const = 0;
     virtual double hamiltonian(const VortexSystem &) const = 0;
-    // CUDA overrides these hooks to retain state and Runge--Kutta stages on the device.
-    virtual bool supportsDeviceStepping() const noexcept { return false; }
-    virtual void uploadDeviceState(const VortexSystem &) const;
-    virtual void downloadDeviceState(VortexSystem &) const;
-    virtual void evaluateDeviceState(VelocityField &) const;
-    virtual void deviceRk4Step(double) const;
-    virtual StepResult deviceDopri5Step(double, double, double, double, double) const;
-    virtual void invalidateDeviceDerivative() const noexcept {}
 };
 class InfinitePlaneKernel final : public VelocityKernel {
   public:

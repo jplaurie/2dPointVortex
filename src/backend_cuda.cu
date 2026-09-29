@@ -8,6 +8,7 @@
 #include <math_constants.h>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -17,19 +18,61 @@ void cudaCheck(cudaError_t status, const char *operation) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
 }
 
-enum class Geometry : int { infinite, periodic_x, periodic, disk };
+template <typename T> class CudaBuffer {
+  public:
+    CudaBuffer() = default;
+    ~CudaBuffer() { reset(); }
+    CudaBuffer(const CudaBuffer &) = delete;
+    CudaBuffer &operator=(const CudaBuffer &) = delete;
+    CudaBuffer(CudaBuffer &&other) noexcept
+        : data_(std::exchange(other.data_, nullptr)), size_(std::exchange(other.size_, 0)) {}
+    CudaBuffer &operator=(CudaBuffer &&other) noexcept {
+        if (this != &other) {
+            reset();
+            data_ = std::exchange(other.data_, nullptr);
+            size_ = std::exchange(other.size_, 0);
+        }
+        return *this;
+    }
+
+    void allocate(std::size_t count, const char *operation) {
+        reset();
+        cudaCheck(cudaMalloc(reinterpret_cast<void **>(&data_), count * sizeof(T)), operation);
+        size_ = count;
+    }
+    void reset() noexcept {
+        cudaFree(data_);
+        data_ = nullptr;
+        size_ = 0;
+    }
+    [[nodiscard]] T *get() const noexcept { return data_; }
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+
+  private:
+    T *data_ = nullptr;
+    std::size_t size_ = 0;
+};
+
+struct DeviceGeometry {
+    BoundaryKind boundary;
+    double coreRadiusSquared;
+    double boxLengthX;
+    double boxLengthY;
+    double diskRadius;
+    int periodicImageLayers;
+};
 
 __global__ void velocityKernel(const double *x, const double *y, const double *gamma, double *u,
                                double *v, std::size_t count, std::size_t begin, std::size_t end,
-                               Geometry geometry, double first, double second, int imageLayers,
-                               int *failure) {
+                               DeviceGeometry geometry, int *failure) {
     const std::size_t target =
         begin + static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (target >= end)
         return;
     if (!isfinite(x[target]) || !isfinite(y[target]) ||
-        (geometry == Geometry::disk &&
-         x[target] * x[target] + y[target] * y[target] >= first * first)) {
+        (geometry.boundary == BoundaryKind::disk &&
+         x[target] * x[target] + y[target] * y[target] >=
+             geometry.diskRadius * geometry.diskRadius)) {
         atomicExch(failure, 1);
         return;
     }
@@ -38,23 +81,24 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
     double velocityX = 0.0, velocityY = 0.0;
     double inverseRadius = 0.0, targetX = 0.0, targetY = 0.0;
     double waveNumber = 0.0, periodicScale = 0.0;
-    if (geometry == Geometry::periodic_x || geometry == Geometry::periodic) {
-        waveNumber = twoPi / first;
-        periodicScale = 0.5 / first;
+    if (geometry.boundary == BoundaryKind::periodic_x ||
+        geometry.boundary == BoundaryKind::periodic) {
+        waveNumber = twoPi / geometry.boxLengthX;
+        periodicScale = 0.5 / geometry.boxLengthX;
     }
-    if (geometry == Geometry::disk) {
-        inverseRadius = 1.0 / first;
+    if (geometry.boundary == BoundaryKind::disk) {
+        inverseRadius = 1.0 / geometry.diskRadius;
         targetX = x[target] * inverseRadius;
         targetY = y[target] * inverseRadius;
     }
 
     for (std::size_t source = 0; source < count; ++source) {
-        if (geometry == Geometry::infinite) {
+        if (geometry.boundary == BoundaryKind::infinite) {
             if (source == target)
                 continue;
             const double dx = x[target] - x[source];
             const double dy = y[target] - y[source];
-            const double denominator = dx * dx + dy * dy + first;
+            const double denominator = dx * dx + dy * dy + geometry.coreRadiusSquared;
             if (denominator == 0.0) {
                 atomicExch(failure, 1);
                 continue;
@@ -62,10 +106,11 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
             const double coefficient = inverseTwoPi * gamma[source] / denominator;
             velocityX -= coefficient * dy;
             velocityY += coefficient * dx;
-        } else if (geometry == Geometry::periodic_x) {
+        } else if (geometry.boundary == BoundaryKind::periodic_x) {
             if (source == target)
                 continue;
-            const double scaledX = waveNumber * remainder(x[target] - x[source], first);
+            const double scaledX =
+                waveNumber * remainder(x[target] - x[source], geometry.boxLengthX);
             const double scaledY = waveNumber * (y[target] - y[source]);
             const double magnitudeY = fabs(scaledY);
             double sinhRatio = 0.0, sineRatio = 0.0;
@@ -87,15 +132,16 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
             }
             velocityX -= periodicScale * gamma[source] * sinhRatio;
             velocityY += periodicScale * gamma[source] * sineRatio;
-        } else if (geometry == Geometry::periodic) {
+        } else if (geometry.boundary == BoundaryKind::periodic) {
             // The symmetric nonzero self images have zero sine numerators.
             if (source == target)
                 continue;
-            const double dx = waveNumber * remainder(x[target] - x[source], first);
-            const double dy = waveNumber * remainder(y[target] - y[source], second);
+            const double dx = waveNumber * remainder(x[target] - x[source], geometry.boxLengthX);
+            const double dy = waveNumber * remainder(y[target] - y[source], geometry.boxLengthY);
             const double sineX = sin(dx), sineY = sin(dy);
             const double sinHalfX = sin(0.5 * dx), sinHalfY = sin(0.5 * dy);
-            for (int image = -imageLayers; image <= imageLayers; ++image) {
+            for (int image = -geometry.periodicImageLayers; image <= geometry.periodicImageLayers;
+                 ++image) {
                 const double shiftedX = dx - twoPi * image;
                 const double shiftedY = dy - twoPi * image;
                 const double sinhHalfX = fabs(shiftedX) > 40.0 ? CUDART_INF : sinh(0.5 * shiftedX);
@@ -142,13 +188,13 @@ __global__ void velocityKernel(const double *x, const double *y, const double *g
 }
 
 __global__ void validateStateKernel(const double *x, const double *y, std::size_t count,
-                                    Geometry geometry, double diskRadiusSquared, int *failure) {
+                                    BoundaryKind boundary, double diskRadiusSquared, int *failure) {
     const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= count)
         return;
     const double px = x[index], py = y[index];
     if (!isfinite(px) || !isfinite(py) ||
-        (geometry == Geometry::disk && px * px + py * py >= diskRadiusSquared))
+        (boundary == BoundaryKind::disk && px * px + py * py >= diskRadiusSquared))
         atomicExch(failure, 1);
 }
 
@@ -228,20 +274,13 @@ __global__ void dopriErrorKernel(const double *initialX, const double *initialY,
         blockErrors[blockIdx.x] = maximum[0];
 }
 
-class CudaKernel final : public VelocityKernel {
+class CudaKernel final : public VelocityKernel, public DeviceStepper {
   public:
     explicit CudaKernel(const SimParams &params)
-        : params_(params), cpu_(makeReferenceKernel(params)) {
-        if (params.boundary == BoundaryKind::infinite)
-            geometry_ = Geometry::infinite;
-        else if (params.boundary == BoundaryKind::periodic_x)
-            geometry_ = Geometry::periodic_x;
-        else if (params.boundary == BoundaryKind::periodic)
-            geometry_ = Geometry::periodic;
-        else
-            geometry_ = Geometry::disk;
-    }
-    ~CudaKernel() override { release(); }
+        : params_(params), geometry_{params.boundary,   params.coreRadius * params.coreRadius,
+                                     params.boxLengthX, params.boxLengthY,
+                                     params.diskRadius, params.periodicImageLayers},
+          cpu_(makeReferenceKernel(params)) {}
 
     void evaluateRange(const std::vector<double> &x, const std::vector<double> &y,
                        const std::vector<double> &gamma, VelocityField &velocity, std::size_t begin,
@@ -260,15 +299,17 @@ class CudaKernel final : public VelocityKernel {
         stateCount_ = count;
         deviceStateValid_ = true;
         fsalValid_ = false;
-        cudaCheck(cudaMemcpy(deviceX_, x.data(), bytes, cudaMemcpyHostToDevice), "copy x to GPU");
-        cudaCheck(cudaMemcpy(deviceY_, y.data(), bytes, cudaMemcpyHostToDevice), "copy y to GPU");
-        cudaCheck(cudaMemcpy(deviceGamma_, gamma.data(), bytes, cudaMemcpyHostToDevice),
+        cudaCheck(cudaMemcpy(deviceX_.get(), x.data(), bytes, cudaMemcpyHostToDevice),
+                  "copy x to GPU");
+        cudaCheck(cudaMemcpy(deviceY_.get(), y.data(), bytes, cudaMemcpyHostToDevice),
+                  "copy y to GPU");
+        cudaCheck(cudaMemcpy(deviceGamma_.get(), gamma.data(), bytes, cudaMemcpyHostToDevice),
                   "copy circulation to GPU");
-        evaluateDevice(deviceX_, deviceY_, deviceU_, deviceV_, begin, end);
-        cudaCheck(cudaMemcpy(velocity.x.data() + begin, deviceU_ + begin,
+        evaluateDevice(deviceX_.get(), deviceY_.get(), deviceU_.get(), deviceV_.get(), begin, end);
+        cudaCheck(cudaMemcpy(velocity.x.data() + begin, deviceU_.get() + begin,
                              (end - begin) * sizeof(double), cudaMemcpyDeviceToHost),
                   "copy u from GPU");
-        cudaCheck(cudaMemcpy(velocity.y.data() + begin, deviceV_ + begin,
+        cudaCheck(cudaMemcpy(velocity.y.data() + begin, deviceV_.get() + begin,
                              (end - begin) * sizeof(double), cudaMemcpyDeviceToHost),
                   "copy v from GPU");
     }
@@ -276,8 +317,7 @@ class CudaKernel final : public VelocityKernel {
     double hamiltonian(const VortexSystem &state) const override {
         return cpu_->hamiltonian(state);
     }
-    bool supportsDeviceStepping() const noexcept override { return true; }
-    void uploadDeviceState(const VortexSystem &state) const override {
+    void uploadState(const VortexSystem &state) const override {
         state.validate();
         validateGeometry(state.x, state.y, state.circulation);
         if (state.size() == 0) {
@@ -291,43 +331,45 @@ class CudaKernel final : public VelocityKernel {
         fsalValid_ = false;
         deviceStateValid_ = true;
         const std::size_t bytes = stateCount_ * sizeof(double);
-        cudaCheck(cudaMemcpy(deviceX_, state.x.data(), bytes, cudaMemcpyHostToDevice),
+        cudaCheck(cudaMemcpy(deviceX_.get(), state.x.data(), bytes, cudaMemcpyHostToDevice),
                   "upload state x to GPU");
-        cudaCheck(cudaMemcpy(deviceY_, state.y.data(), bytes, cudaMemcpyHostToDevice),
+        cudaCheck(cudaMemcpy(deviceY_.get(), state.y.data(), bytes, cudaMemcpyHostToDevice),
                   "upload state y to GPU");
-        cudaCheck(cudaMemcpy(deviceGamma_, state.circulation.data(), bytes, cudaMemcpyHostToDevice),
-                  "upload circulation to GPU");
+        cudaCheck(
+            cudaMemcpy(deviceGamma_.get(), state.circulation.data(), bytes, cudaMemcpyHostToDevice),
+            "upload circulation to GPU");
     }
-    void downloadDeviceState(VortexSystem &state) const override {
+    void downloadState(VortexSystem &state) const override {
         requireDeviceState();
         if (state.size() != stateCount_)
             throw std::runtime_error("host and CUDA vortex populations differ");
         if (stateCount_ == 0)
             return;
         const std::size_t bytes = stateCount_ * sizeof(double);
-        cudaCheck(cudaMemcpy(state.x.data(), deviceX_, bytes, cudaMemcpyDeviceToHost),
+        cudaCheck(cudaMemcpy(state.x.data(), deviceX_.get(), bytes, cudaMemcpyDeviceToHost),
                   "download state x from GPU");
-        cudaCheck(cudaMemcpy(state.y.data(), deviceY_, bytes, cudaMemcpyDeviceToHost),
+        cudaCheck(cudaMemcpy(state.y.data(), deviceY_.get(), bytes, cudaMemcpyDeviceToHost),
                   "download state y from GPU");
         state.validate();
     }
-    void evaluateDeviceState(VelocityField &velocity) const override {
+    void evaluateState(VelocityField &velocity) const override {
         requireDeviceState();
         velocity.resize(stateCount_);
         if (stateCount_ == 0)
             return;
-        evaluateDevice(deviceX_, deviceY_, deviceU_, deviceV_, 0, stateCount_);
+        evaluateDevice(deviceX_.get(), deviceY_.get(), deviceU_.get(), deviceV_.get(), 0,
+                       stateCount_);
         const std::size_t bytes = stateCount_ * sizeof(double);
-        cudaCheck(cudaMemcpy(velocity.x.data(), deviceU_, bytes, cudaMemcpyDeviceToHost),
+        cudaCheck(cudaMemcpy(velocity.x.data(), deviceU_.get(), bytes, cudaMemcpyDeviceToHost),
                   "download velocity x from GPU");
-        cudaCheck(cudaMemcpy(velocity.y.data(), deviceV_, bytes, cudaMemcpyDeviceToHost),
+        cudaCheck(cudaMemcpy(velocity.y.data(), deviceV_.get(), bytes, cudaMemcpyDeviceToHost),
                   "download velocity y from GPU");
         for (std::size_t i = 0; i < stateCount_; ++i)
             if (!std::isfinite(velocity.x[i]) || !std::isfinite(velocity.y[i]))
                 throw std::runtime_error(
                     "non-finite CUDA velocity; check scales and close encounters");
     }
-    void deviceRk4Step(double dt) const override {
+    void rk4Step(double dt) const override {
         if (!std::isfinite(dt) || !(dt > 0.0))
             throw std::invalid_argument("timestep must be finite and positive");
         requireDeviceState();
@@ -335,25 +377,26 @@ class CudaKernel final : public VelocityKernel {
             return;
         copyStateToInitial();
         fsalValid_ = false;
-        evaluateDevice(deviceX_, deviceY_, deviceStageX_[0], deviceStageY_[0], 0, stateCount_);
+        evaluateDevice(deviceX_.get(), deviceY_.get(), deviceStageX_[0].get(),
+                       deviceStageY_[0].get(), 0, stateCount_);
         makeStage(0.5 * dt, {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-        evaluateDevice(deviceTemporaryX_, deviceTemporaryY_, deviceStageX_[1], deviceStageY_[1], 0,
-                       stateCount_);
+        evaluateDevice(deviceTemporaryX_.get(), deviceTemporaryY_.get(), deviceStageX_[1].get(),
+                       deviceStageY_[1].get(), 0, stateCount_);
         makeStage(0.5 * dt, {0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-        evaluateDevice(deviceTemporaryX_, deviceTemporaryY_, deviceStageX_[2], deviceStageY_[2], 0,
-                       stateCount_);
+        evaluateDevice(deviceTemporaryX_.get(), deviceTemporaryY_.get(), deviceStageX_[2].get(),
+                       deviceStageY_[2].get(), 0, stateCount_);
         makeStage(dt, {0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0});
-        evaluateDevice(deviceTemporaryX_, deviceTemporaryY_, deviceStageX_[3], deviceStageY_[3], 0,
-                       stateCount_);
+        evaluateDevice(deviceTemporaryX_.get(), deviceTemporaryY_.get(), deviceStageX_[3].get(),
+                       deviceStageY_[3].get(), 0, stateCount_);
         const int blocks = blockCount(stateCount_);
-        rk4CombineKernel<<<blocks, threadsPerBlock>>>(deviceX_, deviceY_, deviceInitialX_,
-                                                      deviceInitialY_, deviceStageXPtrs_,
-                                                      deviceStageYPtrs_, stateCount_, dt);
+        rk4CombineKernel<<<blocks, threadsPerBlock>>>(
+            deviceX_.get(), deviceY_.get(), deviceInitialX_.get(), deviceInitialY_.get(),
+            deviceStageXPtrs_.get(), deviceStageYPtrs_.get(), stateCount_, dt);
         cudaCheck(cudaGetLastError(), "launch CUDA RK4 final stage");
-        validateDeviceState(deviceX_, deviceY_);
+        validateDeviceState(deviceX_.get(), deviceY_.get());
     }
-    StepResult deviceDopri5Step(double dt, double absoluteTolerance, double relativeTolerance,
-                                double minimumTimeStep, double maximumTimeStep) const override {
+    StepResult dopri5Step(double dt, double absoluteTolerance, double relativeTolerance,
+                          double minimumTimeStep, double maximumTimeStep) const override {
         if (!std::isfinite(dt) || !(dt > 0.0))
             throw std::invalid_argument("timestep must be finite and positive");
         requireDeviceState();
@@ -361,7 +404,8 @@ class CudaKernel final : public VelocityKernel {
             return {dt, std::min(maximumTimeStep, 5.0 * dt), 0.0, 0};
         copyStateToInitial();
         if (!fsalValid_)
-            evaluateDevice(deviceX_, deviceY_, deviceStageX_[0], deviceStageY_[0], 0, stateCount_);
+            evaluateDevice(deviceX_.get(), deviceY_.get(), deviceStageX_[0].get(),
+                           deviceStageY_[0].get(), 0, stateCount_);
         unsigned rejected = 0;
         for (;;) {
             makeDopriStages(dt);
@@ -371,9 +415,11 @@ class CudaKernel final : public VelocityKernel {
             const double suggested = std::clamp(dt * factor, minimumTimeStep, maximumTimeStep);
             if (error <= 1.0) {
                 const std::size_t bytes = stateCount_ * sizeof(double);
-                cudaCheck(cudaMemcpy(deviceX_, deviceTemporaryX_, bytes, cudaMemcpyDeviceToDevice),
+                cudaCheck(cudaMemcpy(deviceX_.get(), deviceTemporaryX_.get(), bytes,
+                                     cudaMemcpyDeviceToDevice),
                           "accept CUDA DOPRI5 x state");
-                cudaCheck(cudaMemcpy(deviceY_, deviceTemporaryY_, bytes, cudaMemcpyDeviceToDevice),
+                cudaCheck(cudaMemcpy(deviceY_.get(), deviceTemporaryY_.get(), bytes,
+                                     cudaMemcpyDeviceToDevice),
                           "accept CUDA DOPRI5 y state");
                 std::swap(deviceStageX_[0], deviceStageX_[6]);
                 std::swap(deviceStageY_[0], deviceStageY_[6]);
@@ -386,7 +432,7 @@ class CudaKernel final : public VelocityKernel {
             dt = std::max(minimumTimeStep, std::min(suggested, dt * 0.9));
         }
     }
-    void invalidateDeviceDerivative() const noexcept override { fsalValid_ = false; }
+    void invalidateDerivative() const noexcept override { fsalValid_ = false; }
 
   private:
     static constexpr int threadsPerBlock = 256;
@@ -398,9 +444,9 @@ class CudaKernel final : public VelocityKernel {
     }
     void validateGeometry(const std::vector<double> &x, const std::vector<double> &y,
                           const std::vector<double> &circulation) const {
-        if (geometry_ == Geometry::periodic)
+        if (isPeriodicY(geometry_.boundary))
             validatePeriodicCirculation(circulation);
-        if (geometry_ == Geometry::disk)
+        if (isDisk(geometry_.boundary))
             validateDiskPositions(x, y, params_.diskRadius * params_.diskRadius);
     }
     void requireDeviceState() const {
@@ -408,25 +454,32 @@ class CudaKernel final : public VelocityKernel {
             throw std::logic_error("CUDA device state has not been uploaded");
     }
     void refreshStagePointers() const {
-        cudaCheck(cudaMemcpy(deviceStageXPtrs_, deviceStageX_.data(),
-                             deviceStageX_.size() * sizeof(double *), cudaMemcpyHostToDevice),
+        std::array<double *, 7> stageXPointers{}, stageYPointers{};
+        for (std::size_t stage = 0; stage < deviceStageX_.size(); ++stage) {
+            stageXPointers[stage] = deviceStageX_[stage].get();
+            stageYPointers[stage] = deviceStageY_[stage].get();
+        }
+        cudaCheck(cudaMemcpy(deviceStageXPtrs_.get(), stageXPointers.data(),
+                             stageXPointers.size() * sizeof(double *), cudaMemcpyHostToDevice),
                   "upload CUDA x-stage pointers");
-        cudaCheck(cudaMemcpy(deviceStageYPtrs_, deviceStageY_.data(),
-                             deviceStageY_.size() * sizeof(double *), cudaMemcpyHostToDevice),
+        cudaCheck(cudaMemcpy(deviceStageYPtrs_.get(), stageYPointers.data(),
+                             stageYPointers.size() * sizeof(double *), cudaMemcpyHostToDevice),
                   "upload CUDA y-stage pointers");
     }
     void checkFailure(const char *operation) const {
         int failure = 0;
-        cudaCheck(cudaMemcpy(&failure, deviceFailure_, sizeof(int), cudaMemcpyDeviceToHost),
+        cudaCheck(cudaMemcpy(&failure, deviceFailure_.get(), sizeof(int), cudaMemcpyDeviceToHost),
                   "read CUDA state-validation flag");
         if (failure)
             throw std::runtime_error(std::string(operation) +
                                      ": non-finite, coincident, or out-of-domain vortex state");
     }
     void validateDeviceState(const double *x, const double *y) const {
-        cudaCheck(cudaMemset(deviceFailure_, 0, sizeof(int)), "clear CUDA state-validation flag");
+        cudaCheck(cudaMemset(deviceFailure_.get(), 0, sizeof(int)),
+                  "clear CUDA state-validation flag");
         validateStateKernel<<<blockCount(stateCount_), threadsPerBlock>>>(
-            x, y, stateCount_, geometry_, params_.diskRadius * params_.diskRadius, deviceFailure_);
+            x, y, stateCount_, geometry_.boundary, geometry_.diskRadius * geometry_.diskRadius,
+            deviceFailure_.get());
         cudaCheck(cudaGetLastError(), "launch CUDA state-validation kernel");
         checkFailure("CUDA state validation failed");
     }
@@ -434,47 +487,47 @@ class CudaKernel final : public VelocityKernel {
                         std::size_t end) const {
         if (begin == end)
             return;
-        cudaCheck(cudaMemset(deviceFailure_, 0, sizeof(int)), "clear CUDA velocity error flag");
-        const bool periodicX = geometry_ == Geometry::periodic_x || geometry_ == Geometry::periodic;
-        const double first = geometry_ == Geometry::infinite
-                                 ? params_.coreRadius * params_.coreRadius
-                                 : (periodicX ? params_.boxLengthX : params_.diskRadius);
+        cudaCheck(cudaMemset(deviceFailure_.get(), 0, sizeof(int)),
+                  "clear CUDA velocity error flag");
         velocityKernel<<<blockCount(end - begin), threadsPerBlock>>>(
-            x, y, deviceGamma_, u, v, stateCount_, begin, end, geometry_, first, params_.boxLengthY,
-            params_.periodicImageLayers, deviceFailure_);
+            x, y, deviceGamma_.get(), u, v, stateCount_, begin, end, geometry_,
+            deviceFailure_.get());
         cudaCheck(cudaGetLastError(), "launch CUDA velocity kernel");
         checkFailure("CUDA velocity evaluation failed");
     }
     void copyStateToInitial() const {
         const std::size_t bytes = stateCount_ * sizeof(double);
-        cudaCheck(cudaMemcpy(deviceInitialX_, deviceX_, bytes, cudaMemcpyDeviceToDevice),
-                  "copy CUDA initial x state");
-        cudaCheck(cudaMemcpy(deviceInitialY_, deviceY_, bytes, cudaMemcpyDeviceToDevice),
-                  "copy CUDA initial y state");
+        cudaCheck(
+            cudaMemcpy(deviceInitialX_.get(), deviceX_.get(), bytes, cudaMemcpyDeviceToDevice),
+            "copy CUDA initial x state");
+        cudaCheck(
+            cudaMemcpy(deviceInitialY_.get(), deviceY_.get(), bytes, cudaMemcpyDeviceToDevice),
+            "copy CUDA initial y state");
     }
     void makeStage(double dt, const std::array<double, 7> &coefficients) const {
         makeStageKernel<<<blockCount(stateCount_), threadsPerBlock>>>(
-            deviceTemporaryX_, deviceTemporaryY_, deviceInitialX_, deviceInitialY_,
-            deviceStageXPtrs_, deviceStageYPtrs_, stateCount_, dt, coefficients[0], coefficients[1],
-            coefficients[2], coefficients[3], coefficients[4], coefficients[5], coefficients[6]);
+            deviceTemporaryX_.get(), deviceTemporaryY_.get(), deviceInitialX_.get(),
+            deviceInitialY_.get(), deviceStageXPtrs_.get(), deviceStageYPtrs_.get(), stateCount_,
+            dt, coefficients[0], coefficients[1], coefficients[2], coefficients[3], coefficients[4],
+            coefficients[5], coefficients[6]);
         cudaCheck(cudaGetLastError(), "launch CUDA Runge--Kutta stage");
     }
     void makeDopriStages(double dt) const {
         for (std::size_t stage = 1; stage < 7; ++stage) {
             makeStage(dt, integrator_detail::dopriCoefficients[stage]);
-            evaluateDevice(deviceTemporaryX_, deviceTemporaryY_, deviceStageX_[stage],
-                           deviceStageY_[stage], 0, stateCount_);
+            evaluateDevice(deviceTemporaryX_.get(), deviceTemporaryY_.get(),
+                           deviceStageX_[stage].get(), deviceStageY_[stage].get(), 0, stateCount_);
         }
     }
     double dopriError(double dt, double absoluteTolerance, double relativeTolerance) const {
         const int blocks = blockCount(stateCount_);
         dopriErrorKernel<<<blocks, threadsPerBlock>>>(
-            deviceInitialX_, deviceInitialY_, deviceTemporaryX_, deviceTemporaryY_,
-            deviceStageXPtrs_, deviceStageYPtrs_, stateCount_, dt, absoluteTolerance,
-            relativeTolerance, deviceBlockErrors_);
+            deviceInitialX_.get(), deviceInitialY_.get(), deviceTemporaryX_.get(),
+            deviceTemporaryY_.get(), deviceStageXPtrs_.get(), deviceStageYPtrs_.get(), stateCount_,
+            dt, absoluteTolerance, relativeTolerance, deviceBlockErrors_.get());
         cudaCheck(cudaGetLastError(), "launch CUDA DOPRI5 error kernel");
         hostBlockErrors_.resize(static_cast<std::size_t>(blocks));
-        cudaCheck(cudaMemcpy(hostBlockErrors_.data(), deviceBlockErrors_,
+        cudaCheck(cudaMemcpy(hostBlockErrors_.data(), deviceBlockErrors_.get(),
                              hostBlockErrors_.size() * sizeof(double), cudaMemcpyDeviceToHost),
                   "download CUDA DOPRI5 error blocks");
         return *std::max_element(hostBlockErrors_.begin(), hostBlockErrors_.end());
@@ -483,30 +536,25 @@ class CudaKernel final : public VelocityKernel {
         if (count <= capacity_)
             return;
         release();
-        const std::size_t bytes = count * sizeof(double);
         try {
-            cudaCheck(cudaMalloc(&deviceX_, bytes), "cudaMalloc(x)");
-            cudaCheck(cudaMalloc(&deviceY_, bytes), "cudaMalloc(y)");
-            cudaCheck(cudaMalloc(&deviceGamma_, bytes), "cudaMalloc(circulation)");
-            cudaCheck(cudaMalloc(&deviceU_, bytes), "cudaMalloc(u)");
-            cudaCheck(cudaMalloc(&deviceV_, bytes), "cudaMalloc(v)");
-            cudaCheck(cudaMalloc(&deviceInitialX_, bytes), "cudaMalloc(initial x)");
-            cudaCheck(cudaMalloc(&deviceInitialY_, bytes), "cudaMalloc(initial y)");
-            cudaCheck(cudaMalloc(&deviceTemporaryX_, bytes), "cudaMalloc(temporary x)");
-            cudaCheck(cudaMalloc(&deviceTemporaryY_, bytes), "cudaMalloc(temporary y)");
+            deviceX_.allocate(count, "cudaMalloc(x)");
+            deviceY_.allocate(count, "cudaMalloc(y)");
+            deviceGamma_.allocate(count, "cudaMalloc(circulation)");
+            deviceU_.allocate(count, "cudaMalloc(u)");
+            deviceV_.allocate(count, "cudaMalloc(v)");
+            deviceInitialX_.allocate(count, "cudaMalloc(initial x)");
+            deviceInitialY_.allocate(count, "cudaMalloc(initial y)");
+            deviceTemporaryX_.allocate(count, "cudaMalloc(temporary x)");
+            deviceTemporaryY_.allocate(count, "cudaMalloc(temporary y)");
             for (std::size_t stage = 0; stage < deviceStageX_.size(); ++stage) {
-                cudaCheck(cudaMalloc(&deviceStageX_[stage], bytes), "cudaMalloc(x stage)");
-                cudaCheck(cudaMalloc(&deviceStageY_[stage], bytes), "cudaMalloc(y stage)");
+                deviceStageX_[stage].allocate(count, "cudaMalloc(x stage)");
+                deviceStageY_[stage].allocate(count, "cudaMalloc(y stage)");
             }
-            cudaCheck(cudaMalloc(&deviceStageXPtrs_, deviceStageX_.size() * sizeof(double *)),
-                      "cudaMalloc(x-stage pointers)");
-            cudaCheck(cudaMalloc(&deviceStageYPtrs_, deviceStageY_.size() * sizeof(double *)),
-                      "cudaMalloc(y-stage pointers)");
-            cudaCheck(
-                cudaMalloc(&deviceBlockErrors_,
-                           ((count + threadsPerBlock - 1) / threadsPerBlock) * sizeof(double)),
-                "cudaMalloc(DOPRI5 errors)");
-            cudaCheck(cudaMalloc(&deviceFailure_, sizeof(int)), "cudaMalloc(error flag)");
+            deviceStageXPtrs_.allocate(deviceStageX_.size(), "cudaMalloc(x-stage pointers)");
+            deviceStageYPtrs_.allocate(deviceStageY_.size(), "cudaMalloc(y-stage pointers)");
+            deviceBlockErrors_.allocate((count + threadsPerBlock - 1) / threadsPerBlock,
+                                        "cudaMalloc(DOPRI5 errors)");
+            deviceFailure_.allocate(1, "cudaMalloc(error flag)");
             refreshStagePointers();
             capacity_ = count;
         } catch (...) {
@@ -515,47 +563,40 @@ class CudaKernel final : public VelocityKernel {
         }
     }
     void release() const noexcept {
-        cudaFree(deviceX_);
-        cudaFree(deviceY_);
-        cudaFree(deviceGamma_);
-        cudaFree(deviceU_);
-        cudaFree(deviceV_);
-        cudaFree(deviceInitialX_);
-        cudaFree(deviceInitialY_);
-        cudaFree(deviceTemporaryX_);
-        cudaFree(deviceTemporaryY_);
-        for (double *&stage : deviceStageX_)
-            cudaFree(stage);
-        for (double *&stage : deviceStageY_)
-            cudaFree(stage);
-        cudaFree(deviceStageXPtrs_);
-        cudaFree(deviceStageYPtrs_);
-        cudaFree(deviceBlockErrors_);
-        cudaFree(deviceFailure_);
-        deviceX_ = deviceY_ = deviceGamma_ = deviceU_ = deviceV_ = nullptr;
-        deviceInitialX_ = deviceInitialY_ = deviceTemporaryX_ = deviceTemporaryY_ = nullptr;
-        deviceStageX_.fill(nullptr);
-        deviceStageY_.fill(nullptr);
-        deviceStageXPtrs_ = deviceStageYPtrs_ = nullptr;
-        deviceBlockErrors_ = nullptr;
-        deviceFailure_ = nullptr;
+        deviceX_.reset();
+        deviceY_.reset();
+        deviceGamma_.reset();
+        deviceU_.reset();
+        deviceV_.reset();
+        deviceInitialX_.reset();
+        deviceInitialY_.reset();
+        deviceTemporaryX_.reset();
+        deviceTemporaryY_.reset();
+        for (auto &stage : deviceStageX_)
+            stage.reset();
+        for (auto &stage : deviceStageY_)
+            stage.reset();
+        deviceStageXPtrs_.reset();
+        deviceStageYPtrs_.reset();
+        deviceBlockErrors_.reset();
+        deviceFailure_.reset();
         capacity_ = 0;
         stateCount_ = 0;
         deviceStateValid_ = false;
         fsalValid_ = false;
     }
     SimParams params_;
-    Geometry geometry_ = Geometry::infinite;
+    DeviceGeometry geometry_;
     std::unique_ptr<VelocityKernel> cpu_;
-    mutable double *deviceX_ = nullptr, *deviceY_ = nullptr, *deviceGamma_ = nullptr;
-    mutable double *deviceU_ = nullptr, *deviceV_ = nullptr;
-    mutable double *deviceInitialX_ = nullptr, *deviceInitialY_ = nullptr;
-    mutable double *deviceTemporaryX_ = nullptr, *deviceTemporaryY_ = nullptr;
-    mutable std::array<double *, 7> deviceStageX_{};
-    mutable std::array<double *, 7> deviceStageY_{};
-    mutable double **deviceStageXPtrs_ = nullptr, **deviceStageYPtrs_ = nullptr;
-    mutable double *deviceBlockErrors_ = nullptr;
-    mutable int *deviceFailure_ = nullptr;
+    mutable CudaBuffer<double> deviceX_, deviceY_, deviceGamma_;
+    mutable CudaBuffer<double> deviceU_, deviceV_;
+    mutable CudaBuffer<double> deviceInitialX_, deviceInitialY_;
+    mutable CudaBuffer<double> deviceTemporaryX_, deviceTemporaryY_;
+    mutable std::array<CudaBuffer<double>, 7> deviceStageX_;
+    mutable std::array<CudaBuffer<double>, 7> deviceStageY_;
+    mutable CudaBuffer<double *> deviceStageXPtrs_, deviceStageYPtrs_;
+    mutable CudaBuffer<double> deviceBlockErrors_;
+    mutable CudaBuffer<int> deviceFailure_;
     mutable std::vector<double> hostBlockErrors_;
     mutable std::size_t capacity_ = 0;
     mutable std::size_t stateCount_ = 0;

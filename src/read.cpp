@@ -122,8 +122,8 @@ bool assignEnumParameter(const std::string &key, const std::string &value, SimPa
     if (key == "boundaryCondition") {
         const auto boundary = boundaryFromString(value);
         if (!boundary) {
-            throw std::invalid_argument(
-                "boundaryCondition must be infinite, periodic_x, periodic, or disk");
+            throw std::invalid_argument("boundaryCondition must be " +
+                                        enumChoices<BoundaryKind>());
         }
         params.boundary = *boundary;
         return true;
@@ -131,16 +131,16 @@ bool assignEnumParameter(const std::string &key, const std::string &value, SimPa
     if (key == "dipoleReinjection") {
         const auto mode = reinjectionFromString(value);
         if (!mode)
-            throw std::invalid_argument(
-                "dipoleReinjection must be none, independent, or paired");
+            throw std::invalid_argument("dipoleReinjection must be " +
+                                        enumChoices<ReinjectionMode>());
         params.dipoleReinjection = *mode;
         return true;
     }
     if (key == "initialCondition") {
         const auto condition = initialConditionFromString(value);
         if (!condition) {
-            throw std::invalid_argument(
-                "initialCondition must be random, ring, single, dipole, or file");
+            throw std::invalid_argument("initialCondition must be " +
+                                        enumChoices<InitialConditionKind>());
         }
         params.initialCondition = *condition;
         return true;
@@ -148,7 +148,7 @@ bool assignEnumParameter(const std::string &key, const std::string &value, SimPa
     if (key == "integrator") {
         const auto integrator = integratorFromString(value);
         if (!integrator)
-            throw std::invalid_argument("integrator must be rk4 or dopri5");
+            throw std::invalid_argument("integrator must be " + enumChoices<IntegratorKind>());
         params.integrator = *integrator;
         return true;
     }
@@ -299,7 +299,7 @@ void validateDipoleSettings(const SimParams &params) {
         throw std::invalid_argument("dipoleRemovalInterval must be non-negative");
     if (!params.dipoleRemoval && params.dipoleReinjection != ReinjectionMode::none)
         throw std::invalid_argument("dipoleReinjection requires dipoleRemoval true");
-    if (params.boundary != BoundaryKind::periodic && params.boundary != BoundaryKind::disk &&
+    if (!isPeriodicY(params.boundary) && !isDisk(params.boundary) &&
         params.dipoleReinjection != ReinjectionMode::none) {
         throw std::invalid_argument(
             "dipole reinjection is available only for periodic and disk geometries");
@@ -307,7 +307,7 @@ void validateDipoleSettings(const SimParams &params) {
 }
 
 void validateInputAndOutput(const SimParams &params) {
-    if (params.boundary == BoundaryKind::periodic &&
+    if (isPeriodicY(params.boundary) &&
         std::abs(params.boxLengthX - params.boxLengthY) >
             1e-13 * std::max(params.boxLengthX, params.boxLengthY)) {
         throw std::invalid_argument("Weiss-McWilliams periodic geometry requires a square box");

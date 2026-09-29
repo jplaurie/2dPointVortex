@@ -32,9 +32,8 @@ double displacement(double difference, double length, bool periodic) {
 }
 
 std::vector<Candidate> findCandidates(const VortexSystem &vortices, const SimParams &params) {
-    const bool periodicX = params.boundary == BoundaryKind::periodic ||
-                           params.boundary == BoundaryKind::periodic_x;
-    const bool periodicY = params.boundary == BoundaryKind::periodic;
+    const bool periodicX = isPeriodicX(params.boundary);
+    const bool periodicY = isPeriodicY(params.boundary);
     const double lowerThresholdSquared =
         params.dipoleRemovalDistance * params.dipoleRemovalDistance;
 
@@ -61,7 +60,7 @@ std::vector<Candidate> findCandidates(const VortexSystem &vortices, const SimPar
                 candidates.push_back({first, second, distanceSquared});
         }
 
-        if (params.boundary == BoundaryKind::disk) {
+        if (isDisk(params.boundary)) {
             const double radiusSquared = params.diskRadius * params.diskRadius;
             const double radialSquared = vortices.x[first] * vortices.x[first] +
                                          vortices.y[first] * vortices.y[first];
@@ -194,7 +193,7 @@ void DipoleManager::injectSingle(VortexSystem &vortices, double circulation) {
 void DipoleManager::injectPair(VortexSystem &vortices, double firstCirculation,
                                double secondCirculation, std::size_t population) {
     std::uniform_real_distribution<double> unit(0.0, 1.0);
-    const bool periodic = params_.boundary == BoundaryKind::periodic;
+    const bool periodic = isPeriodicY(params_.boundary);
     const double area = periodic ? params_.boxLengthX * params_.boxLengthY
                                  : std::numbers::pi * params_.diskRadius * params_.diskRadius;
     const double spacing = std::sqrt(area / static_cast<double>(population));

@@ -3,10 +3,10 @@ project(PointVortex VERSION 0.1.0 LANGUAGES CXX)
 option(POINT_VORTEX_OPENMP "Enable OpenMP acceleration" ON)
 option(POINT_VORTEX_MPI "Build the MPI backend" ON)
 option(POINT_VORTEX_CUDA "Build the CUDA backend" ON)
-set(POINT_VORTEX_CUDA_ARCHITECTURES "" CACHE STRING
-    "Optional CUDA architecture override; empty uses CMake/toolchain defaults")
+set(POINT_VORTEX_CUDA_ARCHITECTURES "120" CACHE STRING
+    "CUDA architectures to build; defaults to NVIDIA compute capability 12.0")
 add_library(point_vortex_lib src/compute.cpp src/timestep.cpp src/read.cpp src/checkpoint.cpp
-                             src/dipole.cpp src/backend_common.cpp
+                             src/dipole.cpp src/backend_common.cpp src/simulation.cpp
                              initial_conditions/initial_condition.cpp)
 target_include_directories(point_vortex_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
                                                    ${CMAKE_CURRENT_SOURCE_DIR}/initial_conditions)

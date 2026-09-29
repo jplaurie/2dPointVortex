@@ -14,26 +14,6 @@ namespace {
 constexpr const char *checkpointMagic = "POINT_VORTEX_CHECKPOINT";
 constexpr unsigned checkpointVersion = 8;
 
-struct CheckpointGeometry {
-    double lengthX;
-    double lengthY;
-    int imageLayers;
-};
-
-CheckpointGeometry checkpointGeometry(const SimParams &params) {
-    switch (params.boundary) {
-    case BoundaryKind::periodic_x:
-        return {params.boxLengthX, 0.0, 0};
-    case BoundaryKind::periodic:
-        return {params.boxLengthX, params.boxLengthY, params.periodicImageLayers};
-    case BoundaryKind::disk:
-        return {params.diskRadius, 0.0, 0};
-    case BoundaryKind::infinite:
-        return {0.0, 0.0, 0};
-    }
-    throw std::logic_error("unsupported boundary kind");
-}
-
 void validateCheckpointContents(const Checkpoint &checkpoint, unsigned fileVersion) {
     if (!std::isfinite(checkpoint.time) || checkpoint.time < 0.0 ||
         !std::isfinite(checkpoint.suggestedTimeStep) ||
@@ -143,7 +123,7 @@ void writeCheckpoint(const std::filesystem::path &directory, const VortexSystem 
         output << "event_index " << progress.eventIndex << '\n';
         output << "core_radius " << params.coreRadius << '\n';
         output << "integrator " << toString(params.integrator) << '\n';
-        const CheckpointGeometry geometry = checkpointGeometry(params);
+        const GeometrySignature geometry = geometrySignature(params);
         output << "geometry " << toString(params.boundary) << ' ' << geometry.lengthX << ' '
                << geometry.lengthY << ' ' << geometry.imageLayers << '\n';
         output << "dipole_config " << params.dipoleRemoval << ' '

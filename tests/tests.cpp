@@ -77,6 +77,32 @@ void managedRunPathTest() {
         paths.checkpoints != "runs/default/checkpoints")
         throw std::runtime_error("managed run layout defaults failed");
 }
+void parameterEnumTest() {
+    if (integratorFromString("rk4") != IntegratorKind::rk4 ||
+        integratorFromString("dopri5") != IntegratorKind::dopri5 ||
+        reinjectionFromString("paired") != ReinjectionMode::paired ||
+        initialConditionFromString("file") != InitialConditionKind::file ||
+        boundaryFromString("periodic_x") != BoundaryKind::periodic_x ||
+        integratorFromString("invalid") || boundaryFromString("invalid")) {
+        throw std::runtime_error("parameter enum parsing failed");
+    }
+    if (std::string(toString(IntegratorKind::rk4)) != "rk4" ||
+        std::string(toString(ReinjectionMode::independent)) != "independent" ||
+        std::string(toString(InitialConditionKind::dipole)) != "dipole" ||
+        std::string(toString(BoundaryKind::disk)) != "disk" ||
+        std::string(toString(static_cast<BoundaryKind>(255))) != "unknown") {
+        throw std::runtime_error("parameter enum formatting failed");
+    }
+    if (enumChoices<IntegratorKind>() != "rk4 or dopri5" ||
+        enumChoices<BoundaryKind>() != "infinite, periodic_x, periodic, or disk") {
+        throw std::runtime_error("parameter enum choices failed");
+    }
+    if (!isPeriodicX(BoundaryKind::periodic_x) || !isPeriodicX(BoundaryKind::periodic) ||
+        isPeriodicX(BoundaryKind::disk) || !isPeriodicY(BoundaryKind::periodic) ||
+        isPeriodicY(BoundaryKind::periodic_x) || !isDisk(BoundaryKind::disk)) {
+        throw std::runtime_error("boundary property helpers failed");
+    }
+}
 void checkpointTest() {
     const auto directory =
         std::filesystem::temp_directory_path() /
@@ -496,6 +522,7 @@ int main() {
         rk4Test();
         dopriTest();
         managedRunPathTest();
+        parameterEnumTest();
         checkpointTest();
         geometryTests();
         periodicInitializationTest();

@@ -68,21 +68,6 @@ void VelocityKernel::evaluate(const std::vector<double> &x, const std::vector<do
         if (!std::isfinite(velocity.x[i]) || !std::isfinite(velocity.y[i]))
             throw std::runtime_error("non-finite velocity; check scales and close encounters");
 }
-void VelocityKernel::uploadDeviceState(const VortexSystem &) const {
-    throw std::logic_error("selected backend does not support device-resident integration");
-}
-void VelocityKernel::downloadDeviceState(VortexSystem &) const {
-    throw std::logic_error("selected backend does not support device-resident integration");
-}
-void VelocityKernel::evaluateDeviceState(VelocityField &) const {
-    throw std::logic_error("selected backend does not support device-resident integration");
-}
-void VelocityKernel::deviceRk4Step(double) const {
-    throw std::logic_error("selected backend does not support device-resident integration");
-}
-StepResult VelocityKernel::deviceDopri5Step(double, double, double, double, double) const {
-    throw std::logic_error("selected backend does not support device-resident integration");
-}
 double InfinitePlaneKernel::hamiltonian(const VortexSystem &vortices) const {
     return computeInvariants(vortices, std::sqrt(coreRadiusSquared_)).hamiltonian;
 }

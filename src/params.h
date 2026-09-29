@@ -1,100 +1,117 @@
 #ifndef POINT_VORTEX_PARAMS_H
 #define POINT_VORTEX_PARAMS_H
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 enum class IntegratorKind : std::uint8_t { rk4, dopri5 };
 enum class ReinjectionMode : std::uint8_t { none, independent, paired };
 enum class InitialConditionKind : std::uint8_t { random, ring, single, dipole, file };
 enum class BoundaryKind : std::uint8_t { infinite, periodic_x, periodic, disk };
+
+namespace parameter_detail {
+template <typename Enum> struct EnumTraits;
+
+template <> struct EnumTraits<IntegratorKind> {
+    static constexpr std::array names{
+        std::pair{IntegratorKind::rk4, "rk4"},
+        std::pair{IntegratorKind::dopri5, "dopri5"},
+    };
+};
+template <> struct EnumTraits<ReinjectionMode> {
+    static constexpr std::array names{
+        std::pair{ReinjectionMode::none, "none"},
+        std::pair{ReinjectionMode::independent, "independent"},
+        std::pair{ReinjectionMode::paired, "paired"},
+    };
+};
+template <> struct EnumTraits<InitialConditionKind> {
+    static constexpr std::array names{
+        std::pair{InitialConditionKind::random, "random"},
+        std::pair{InitialConditionKind::ring, "ring"},
+        std::pair{InitialConditionKind::single, "single"},
+        std::pair{InitialConditionKind::dipole, "dipole"},
+        std::pair{InitialConditionKind::file, "file"},
+    };
+};
+template <> struct EnumTraits<BoundaryKind> {
+    static constexpr std::array names{
+        std::pair{BoundaryKind::infinite, "infinite"},
+        std::pair{BoundaryKind::periodic_x, "periodic_x"},
+        std::pair{BoundaryKind::periodic, "periodic"},
+        std::pair{BoundaryKind::disk, "disk"},
+    };
+};
+
+template <typename Enum> [[nodiscard]] constexpr const char *enumName(Enum value) noexcept {
+    for (const auto &[candidate, name] : EnumTraits<Enum>::names)
+        if (candidate == value)
+            return name;
+    return "unknown";
+}
+
+template <typename Enum>
+[[nodiscard]] constexpr std::optional<Enum> enumFromString(std::string_view value) noexcept {
+    for (const auto &[candidate, name] : EnumTraits<Enum>::names)
+        if (value == name)
+            return candidate;
+    return std::nullopt;
+}
+} // namespace parameter_detail
+
+template <typename Enum> [[nodiscard]] std::string enumChoices() {
+    const auto &names = parameter_detail::EnumTraits<Enum>::names;
+    std::string choices;
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        if (index > 0)
+            choices += index + 1 == names.size() ? (names.size() == 2 ? " or " : ", or ") : ", ";
+        choices += names[index].second;
+    }
+    return choices;
+}
+
 [[nodiscard]] constexpr const char *toString(IntegratorKind kind) noexcept {
-    return kind == IntegratorKind::rk4 ? "rk4" : "dopri5";
+    return parameter_detail::enumName(kind);
 }
 [[nodiscard]] constexpr const char *toString(ReinjectionMode mode) noexcept {
-    switch (mode) {
-    case ReinjectionMode::independent:
-        return "independent";
-    case ReinjectionMode::paired:
-        return "paired";
-    case ReinjectionMode::none:
-        return "none";
-    }
-    return "none";
+    return parameter_detail::enumName(mode);
 }
 [[nodiscard]] constexpr const char *toString(InitialConditionKind kind) noexcept {
-    switch (kind) {
-    case InitialConditionKind::random:
-        return "random";
-    case InitialConditionKind::ring:
-        return "ring";
-    case InitialConditionKind::single:
-        return "single";
-    case InitialConditionKind::dipole:
-        return "dipole";
-    case InitialConditionKind::file:
-        return "file";
-    }
-    return "unknown";
+    return parameter_detail::enumName(kind);
 }
 [[nodiscard]] constexpr const char *toString(BoundaryKind kind) noexcept {
-    switch (kind) {
-    case BoundaryKind::infinite:
-        return "infinite";
-    case BoundaryKind::periodic_x:
-        return "periodic_x";
-    case BoundaryKind::periodic:
-        return "periodic";
-    case BoundaryKind::disk:
-        return "disk";
-    }
-    return "unknown";
+    return parameter_detail::enumName(kind);
 }
 [[nodiscard]] constexpr std::optional<IntegratorKind>
 integratorFromString(std::string_view value) noexcept {
-    if (value == "rk4")
-        return IntegratorKind::rk4;
-    if (value == "dopri5")
-        return IntegratorKind::dopri5;
-    return std::nullopt;
+    return parameter_detail::enumFromString<IntegratorKind>(value);
 }
 [[nodiscard]] constexpr std::optional<ReinjectionMode>
 reinjectionFromString(std::string_view value) noexcept {
-    if (value == "none")
-        return ReinjectionMode::none;
-    if (value == "independent")
-        return ReinjectionMode::independent;
-    if (value == "paired")
-        return ReinjectionMode::paired;
-    return std::nullopt;
+    return parameter_detail::enumFromString<ReinjectionMode>(value);
 }
 [[nodiscard]] constexpr std::optional<InitialConditionKind>
 initialConditionFromString(std::string_view value) noexcept {
-    if (value == "random")
-        return InitialConditionKind::random;
-    if (value == "ring")
-        return InitialConditionKind::ring;
-    if (value == "single")
-        return InitialConditionKind::single;
-    if (value == "dipole")
-        return InitialConditionKind::dipole;
-    if (value == "file")
-        return InitialConditionKind::file;
-    return std::nullopt;
+    return parameter_detail::enumFromString<InitialConditionKind>(value);
 }
 [[nodiscard]] constexpr std::optional<BoundaryKind>
 boundaryFromString(std::string_view value) noexcept {
-    if (value == "infinite")
-        return BoundaryKind::infinite;
-    if (value == "periodic_x")
-        return BoundaryKind::periodic_x;
-    if (value == "periodic")
-        return BoundaryKind::periodic;
-    if (value == "disk")
-        return BoundaryKind::disk;
-    return std::nullopt;
+    return parameter_detail::enumFromString<BoundaryKind>(value);
+}
+
+[[nodiscard]] constexpr bool isPeriodicX(BoundaryKind boundary) noexcept {
+    return boundary == BoundaryKind::periodic_x || boundary == BoundaryKind::periodic;
+}
+[[nodiscard]] constexpr bool isPeriodicY(BoundaryKind boundary) noexcept {
+    return boundary == BoundaryKind::periodic;
+}
+[[nodiscard]] constexpr bool isDisk(BoundaryKind boundary) noexcept {
+    return boundary == BoundaryKind::disk;
 }
 struct SimParams {
     // Simulation and integrator controls.
@@ -144,6 +161,26 @@ struct SimParams {
     bool overwriteRun = false;
     void validate() const;
 };
+
+struct GeometrySignature {
+    double lengthX;
+    double lengthY;
+    int imageLayers;
+};
+
+[[nodiscard]] inline GeometrySignature geometrySignature(const SimParams &params) {
+    switch (params.boundary) {
+    case BoundaryKind::periodic_x:
+        return {params.boxLengthX, 0.0, 0};
+    case BoundaryKind::periodic:
+        return {params.boxLengthX, params.boxLengthY, params.periodicImageLayers};
+    case BoundaryKind::disk:
+        return {params.diskRadius, 0.0, 0};
+    case BoundaryKind::infinite:
+        return {0.0, 0.0, 0};
+    }
+    throw std::logic_error("unsupported boundary kind");
+}
 
 struct RunPaths {
     std::filesystem::path directory;

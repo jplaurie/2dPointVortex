@@ -53,41 +53,72 @@ void removeManagedRunOutput(const RunPaths &paths) {
     }
 }
 
+struct GeometrySignature {
+    double lengthX;
+    double lengthY;
+    int imageLayers;
+};
+
+GeometrySignature geometrySignature(const SimParams &params) {
+    switch (params.boundary) {
+    case BoundaryKind::periodic_x:
+        return {params.boxLengthX, 0.0, 0};
+    case BoundaryKind::periodic:
+        return {params.boxLengthX, params.boxLengthY, params.periodicImageLayers};
+    case BoundaryKind::disk:
+        return {params.diskRadius, 0.0, 0};
+    case BoundaryKind::infinite:
+        return {0.0, 0.0, 0};
+    }
+    throw std::logic_error("unsupported boundary kind");
+}
+
 bool checkpointMatches(const Checkpoint &checkpoint, const SimParams &params) {
-    const bool periodicX =
-        params.boundaryCondition == "periodic" || params.boundaryCondition == "periodic_x";
-    const double lengthX = periodicX
-                               ? params.boxLengthX
-                               : (params.boundaryCondition == "disk" ? params.diskRadius : 0.0);
-    const double lengthY = params.boundaryCondition == "periodic" ? params.boxLengthY : 0.0;
-    const int imageLayers = params.boundaryCondition == "periodic" ? params.periodicImageLayers : 0;
-    return checkpoint.coreRadius == params.coreRadius &&
-           checkpoint.integrator == params.integrator &&
-           checkpoint.boundaryCondition == params.boundaryCondition &&
-           checkpoint.geometryLengthX == lengthX && checkpoint.geometryLengthY == lengthY &&
-           checkpoint.periodicImageLayers == imageLayers &&
-           checkpoint.dipoleRemoval == params.dipoleRemoval &&
-           (!params.dipoleRemoval ||
-            (checkpoint.dipoleRemovalDistance == params.dipoleRemovalDistance &&
-             ((!checkpoint.hasDipoleUpperConfig && !params.dipoleRemovalUpper) ||
-              (checkpoint.hasDipoleUpperConfig &&
-               checkpoint.dipoleRemovalUpper == params.dipoleRemovalUpper &&
-               (!params.dipoleRemovalUpper ||
-                checkpoint.dipoleRemovalUpperDistance ==
-                    params.dipoleRemovalUpperDistance))) &&
-             (!checkpoint.hasDipoleSchedule ||
-              checkpoint.dipoleRemovalInterval == params.dipoleRemovalInterval) &&
-             checkpoint.dipoleReinjection == params.dipoleReinjection));
+    const GeometrySignature geometry = geometrySignature(params);
+    if (checkpoint.coreRadius != params.coreRadius || checkpoint.integrator != params.integrator ||
+        checkpoint.boundary != params.boundary ||
+        checkpoint.geometryLengthX != geometry.lengthX ||
+        checkpoint.geometryLengthY != geometry.lengthY ||
+        checkpoint.periodicImageLayers != geometry.imageLayers ||
+        checkpoint.dipoleRemoval != params.dipoleRemoval) {
+        return false;
+    }
+
+    if (!params.dipoleRemoval)
+        return true;
+
+    const bool upperRemovalMatches =
+        (!checkpoint.hasDipoleUpperConfig && !params.dipoleRemovalUpper) ||
+        (checkpoint.hasDipoleUpperConfig &&
+         checkpoint.dipoleRemovalUpper == params.dipoleRemovalUpper &&
+         (!params.dipoleRemovalUpper || checkpoint.dipoleRemovalUpperDistance ==
+                                              params.dipoleRemovalUpperDistance));
+    const bool scheduleMatches =
+        !checkpoint.hasDipoleSchedule ||
+        checkpoint.dipoleRemovalInterval == params.dipoleRemovalInterval;
+
+    return checkpoint.dipoleRemovalDistance == params.dipoleRemovalDistance &&
+           upperRemovalMatches && scheduleMatches &&
+           checkpoint.dipoleReinjection == params.dipoleReinjection;
+}
+
+InitialGeometry initialGeometry(BoundaryKind boundary) {
+    switch (boundary) {
+    case BoundaryKind::infinite:
+        return InitialGeometry::infinite;
+    case BoundaryKind::periodic_x:
+        return InitialGeometry::periodic_x;
+    case BoundaryKind::periodic:
+        return InitialGeometry::periodic;
+    case BoundaryKind::disk:
+        return InitialGeometry::disk;
+    }
+    throw std::logic_error("unsupported boundary kind");
 }
 
 InitialConditionOptions initialConditionOptions(const SimParams &params) {
     InitialConditionOptions options;
-    if (params.boundaryCondition == "periodic_x")
-        options.geometry = InitialGeometry::periodic_x;
-    else if (params.boundaryCondition == "periodic")
-        options.geometry = InitialGeometry::periodic;
-    else if (params.boundaryCondition == "disk")
-        options.geometry = InitialGeometry::disk;
+    options.geometry = initialGeometry(params.boundary);
     options.count = std::max<std::size_t>(1, params.vortexCount);
     options.seed = params.randomSeed;
     options.boxLength = params.boxLengthX;
@@ -95,60 +126,199 @@ InitialConditionOptions initialConditionOptions(const SimParams &params) {
     return options;
 }
 
-VortexSystem makeInitialState(const SimParams &params) {
-    if (params.initialCondition == InitialConditionKind::file) {
-        const InitialConditionMetadata metadata =
-            readInitialConditionMetadata(params.initialConditionFile);
-        if (metadata.geometry && *metadata.geometry != params.boundaryCondition)
-            throw std::invalid_argument("initial-condition geometry is " + *metadata.geometry +
-                                        " but boundaryCondition is " + params.boundaryCondition);
-        if ((params.boundaryCondition == "periodic" || params.boundaryCondition == "periodic_x") &&
-            metadata.boxLength) {
-            const bool xMismatch = std::abs(*metadata.boxLength - params.boxLengthX) >
-                                   1e-13 * std::max(*metadata.boxLength, params.boxLengthX);
-            const bool yMismatch = params.boundaryCondition == "periodic" &&
-                                   std::abs(*metadata.boxLength - params.boxLengthY) >
-                                       1e-13 * std::max(*metadata.boxLength, params.boxLengthY);
-            if (xMismatch || yMismatch)
-                throw std::invalid_argument(
-                    "initial-condition periodic length does not match simulation parameters");
-        }
-        if (params.boundaryCondition == "disk" && metadata.diskRadius &&
-            std::abs(*metadata.diskRadius - params.diskRadius) >
-                1e-13 * std::max(*metadata.diskRadius, params.diskRadius))
-            throw std::invalid_argument(
-                "initial-condition disk radius does not match simulation parameters");
-        VortexSystem vortices = loadVortices(params.initialConditionFile);
-        InitialConditionOptions options = initialConditionOptions(params);
-        options.count = vortices.size();
-        validateInitialCondition(vortices, options);
-        return vortices;
+bool significantlyDifferent(double left, double right) {
+    return std::abs(left - right) > 1e-13 * std::max(left, right);
+}
+
+void validateInitialConditionMetadata(const InitialConditionMetadata &metadata,
+                                      const SimParams &params) {
+    if (metadata.geometry && *metadata.geometry != toString(params.boundary)) {
+        throw std::invalid_argument("initial-condition geometry is " + *metadata.geometry +
+                                    " but boundaryCondition is " + toString(params.boundary));
     }
 
-    InitialConditionOptions options = initialConditionOptions(params);
+    const bool periodicX = params.boundary == BoundaryKind::periodic ||
+                           params.boundary == BoundaryKind::periodic_x;
+    if (periodicX && metadata.boxLength) {
+        const bool xMismatch = significantlyDifferent(*metadata.boxLength, params.boxLengthX);
+        const bool yMismatch = params.boundary == BoundaryKind::periodic &&
+                               significantlyDifferent(*metadata.boxLength, params.boxLengthY);
+        if (xMismatch || yMismatch) {
+            throw std::invalid_argument(
+                "initial-condition periodic length does not match simulation parameters");
+        }
+    }
 
-    switch (params.initialCondition) {
+    if (params.boundary == BoundaryKind::disk && metadata.diskRadius &&
+        significantlyDifferent(*metadata.diskRadius, params.diskRadius)) {
+        throw std::invalid_argument(
+            "initial-condition disk radius does not match simulation parameters");
+    }
+}
+
+VortexSystem loadInitialState(const SimParams &params) {
+    const InitialConditionMetadata metadata =
+        readInitialConditionMetadata(params.initialConditionFile);
+    validateInitialConditionMetadata(metadata, params);
+
+    VortexSystem vortices = loadVortices(params.initialConditionFile);
+    InitialConditionOptions options = initialConditionOptions(params);
+    options.count = vortices.size();
+    validateInitialCondition(vortices, options);
+    return vortices;
+}
+
+InitialPattern initialPattern(InitialConditionKind kind) {
+    switch (kind) {
     case InitialConditionKind::random:
-        options.pattern = InitialPattern::random;
-        break;
+        return InitialPattern::random;
     case InitialConditionKind::ring:
-        options.pattern = InitialPattern::ring;
-        break;
+        return InitialPattern::ring;
     case InitialConditionKind::single:
-        options.pattern = InitialPattern::single;
-        break;
+        return InitialPattern::single;
     case InitialConditionKind::dipole:
-        options.pattern = InitialPattern::dipole;
-        break;
+        return InitialPattern::dipole;
     case InitialConditionKind::file:
         throw std::logic_error("file initial condition was not loaded");
     }
+    throw std::logic_error("unsupported initial condition");
+}
+
+VortexSystem makeInitialState(const SimParams &params) {
+    if (params.initialCondition == InitialConditionKind::file)
+        return loadInitialState(params);
+
+    InitialConditionOptions options = initialConditionOptions(params);
+    options.pattern = initialPattern(params.initialCondition);
+
     // Preserve the historical unit-radius ring in the infinite plane. Other
     // geometries use the generator's boundary-aware default radius.
     if (params.initialCondition == InitialConditionKind::ring &&
-        params.boundaryCondition == "infinite")
+        params.boundary == BoundaryKind::infinite)
         options.ringRadius = 1.0;
     return generateInitialCondition(options);
+}
+
+double nextScheduledTime(bool restarting, double currentTime, double interval,
+                         double savedInterval, double savedNextTime) {
+    const double nextTime =
+        restarting && interval == savedInterval ? savedNextTime : currentTime + interval;
+    if (!std::isfinite(nextTime) || !(nextTime > currentTime))
+        throw std::runtime_error("output interval cannot advance simulation time");
+    return nextTime;
+}
+
+double startingTimeStep(const SimParams &params, const Checkpoint &restart, bool restarting) {
+    if (restarting)
+        return restart.suggestedTimeStep;
+    if (params.integrator == IntegratorKind::rk4)
+        return params.timeStep;
+    return std::clamp(params.timeStep, params.minimumTimeStep, params.maximumTimeStep);
+}
+
+struct ScheduleState {
+    double nextTrajectoryTime;
+    OutputSchedule output;
+    double nextDipoleRemovalTime;
+};
+
+ScheduleState makeSchedule(const SimParams &params, const Checkpoint &restart, bool restarting,
+                           double currentTime) {
+    // Preserve a saved cadence when its interval is unchanged. Changing an
+    // interval deliberately starts a new cadence at the restart time.
+    const OutputSchedule &saved = restart.outputSchedule;
+    const bool hasSavedSchedule = restarting && restart.hasOutputSchedule;
+    const double nextTrajectoryTime = nextScheduledTime(
+        restarting, currentTime, params.outputTime,
+        hasSavedSchedule ? saved.trajectoryInterval : params.outputTime, restart.nextOutputTime);
+
+    OutputSchedule output{
+        params.outputTime,
+        params.diagnosticsInterval(),
+        params.checkpointInterval(),
+        nextScheduledTime(restarting, currentTime, params.diagnosticsInterval(),
+                          hasSavedSchedule ? saved.diagnosticsInterval : params.outputTime,
+                          hasSavedSchedule ? saved.nextDiagnosticsTime : restart.nextOutputTime),
+        nextScheduledTime(restarting, currentTime, params.checkpointInterval(),
+                          hasSavedSchedule ? saved.checkpointInterval : params.outputTime,
+                          hasSavedSchedule ? saved.nextCheckpointTime : restart.nextOutputTime)};
+
+    double nextDipoleRemovalTime = 0.0;
+    if (params.dipoleRemoval && params.dipoleRemovalInterval > 0.0) {
+        const bool preserveDipoleSchedule =
+            restarting && restart.hasDipoleSchedule &&
+            restart.dipoleRemovalInterval == params.dipoleRemovalInterval;
+        nextDipoleRemovalTime = preserveDipoleSchedule
+                                    ? restart.nextDipoleRemovalTime
+                                    : currentTime + params.dipoleRemovalInterval;
+        if (!std::isfinite(nextDipoleRemovalTime) ||
+            !(nextDipoleRemovalTime > currentTime)) {
+            throw std::runtime_error("dipole-removal interval cannot advance simulation time");
+        }
+    }
+
+    return {nextTrajectoryTime, output, nextDipoleRemovalTime};
+}
+
+void protectInputFiles(const std::filesystem::path &destination,
+                       const std::string &parameterFile, const SimParams &params) {
+    for (const std::string &input :
+         {parameterFile, params.initialConditionFile, params.restartFile}) {
+        if (!input.empty() && sameFile(destination, input))
+            throw std::runtime_error("output path would overwrite input file: " + input);
+    }
+}
+
+void validateCheckpointDestination(const RunPaths &paths, std::size_t index,
+                                   const std::string &parameterFile,
+                                   const SimParams &params) {
+    const std::filesystem::path destination = checkpointPath(paths.checkpoints, index);
+    protectInputFiles(destination, parameterFile, params);
+    if (sameFile(destination, paths.trajectory) || sameFile(destination, paths.diagnostics))
+        throw std::runtime_error("checkpoint and CSV output paths must be different");
+}
+
+struct RunWriters {
+    std::unique_ptr<TrajectoryWriter> trajectory;
+    std::unique_ptr<DiagnosticsWriter> diagnostics;
+};
+
+RunWriters openRunWriters(const RunPaths &paths, const SimParams &params,
+                          const std::string &parameterFile, const Invariants &initial,
+                          const OutputSchedule &schedule, std::size_t firstCheckpointIndex) {
+    // Check every managed destination before replacing any existing artefact.
+    const std::filesystem::path trajectoryPath =
+        std::filesystem::weakly_canonical(paths.trajectory);
+    const std::filesystem::path diagnosticsPath =
+        std::filesystem::weakly_canonical(paths.diagnostics);
+    if (sameFile(trajectoryPath, diagnosticsPath))
+        throw std::runtime_error("managed trajectory and diagnostics paths must be different");
+
+    protectInputFiles(trajectoryPath, parameterFile, params);
+    protectInputFiles(diagnosticsPath, parameterFile, params);
+    validateCheckpointDestination(paths, firstCheckpointIndex, parameterFile, params);
+
+    if (hasManagedRunOutput(paths)) {
+        if (!params.overwriteRun) {
+            throw std::runtime_error("run directory already contains solver output: " +
+                                     paths.directory.string() +
+                                     " (choose another runDirectory or set overwriteRun true)");
+        }
+        removeManagedRunOutput(paths);
+    }
+
+    RunWriters writers{
+        std::make_unique<TrajectoryWriter>(paths.trajectory.string(), false),
+        std::make_unique<DiagnosticsWriter>(paths.diagnostics.string(), initial, false)};
+    std::cout << "backend=" << backendName() << '\n'
+              << "trajectory=" << std::filesystem::absolute(paths.trajectory).lexically_normal()
+              << " interval=" << schedule.trajectoryInterval << '\n'
+              << "diagnostics=" << std::filesystem::absolute(paths.diagnostics).lexically_normal()
+              << " interval=" << schedule.diagnosticsInterval << '\n'
+              << "checkpoints=" << std::filesystem::absolute(paths.checkpoints).lexically_normal()
+              << " interval=" << schedule.checkpointInterval << '\n'
+              << std::flush;
+    return writers;
 }
 
 } // namespace
@@ -200,64 +370,17 @@ int main(int argc, char **argv) {
         double time = restarting ? restart.time : 0.0;
         if (time > params.endTime)
             throw std::runtime_error("checkpoint time is later than endTime");
-        double dt =
-            restarting
-                ? restart.suggestedTimeStep
-                : (params.integrator == IntegratorKind::dopri5
-                       ? std::clamp(params.timeStep, params.minimumTimeStep, params.maximumTimeStep)
-                       : params.timeStep);
-        // Preserve saved schedules when the interval is unchanged. A changed interval
-        // starts a new cadence from the restart time. Legacy checkpoints have one clock.
-        const auto nextTime = [&](double interval, double savedInterval, double savedNext) {
-            const double next =
-                restarting && interval == savedInterval ? savedNext : time + interval;
-            if (!std::isfinite(next) || !(next > time))
-                throw std::runtime_error("output interval cannot advance simulation time");
-            return next;
-        };
-        const auto &saved = restart.outputSchedule;
-        const bool savedSchedule = restarting && restart.hasOutputSchedule;
-        double nextOutput = nextTime(params.outputTime,
-                                     savedSchedule ? saved.trajectoryInterval : params.outputTime,
-                                     restart.nextOutputTime);
-        OutputSchedule schedule{
-            params.outputTime, params.diagnosticsInterval(), params.checkpointInterval(),
-            nextTime(params.diagnosticsInterval(),
-                     savedSchedule ? saved.diagnosticsInterval : params.outputTime,
-                     savedSchedule ? saved.nextDiagnosticsTime : restart.nextOutputTime),
-            nextTime(params.checkpointInterval(),
-                     savedSchedule ? saved.checkpointInterval : params.outputTime,
-                     savedSchedule ? saved.nextCheckpointTime : restart.nextOutputTime)};
-        double nextDipoleRemoval = 0.0;
-        if (params.dipoleRemoval && params.dipoleRemovalInterval > 0.0) {
-            const bool preserveDipoleSchedule =
-                restarting && restart.hasDipoleSchedule &&
-                restart.dipoleRemovalInterval == params.dipoleRemovalInterval;
-            nextDipoleRemoval = preserveDipoleSchedule
-                                     ? restart.nextDipoleRemovalTime
-                                     : time + params.dipoleRemovalInterval;
-            if (!std::isfinite(nextDipoleRemoval) || !(nextDipoleRemoval > time))
-                throw std::runtime_error(
-                    "dipole-removal interval cannot advance simulation time");
-        }
+        double dt = startingTimeStep(params, restart, restarting);
+        const ScheduleState initialSchedule = makeSchedule(params, restart, restarting, time);
+        double nextOutput = initialSchedule.nextTrajectoryTime;
+        OutputSchedule schedule = initialSchedule.output;
+        double nextDipoleRemoval = initialSchedule.nextDipoleRemovalTime;
         std::size_t acceptedSteps = restarting ? restart.acceptedSteps : 0;
         // The filename index counts checkpoints, independently of CSV frames.
         std::size_t outputIndex = restarting ? restart.outputIndex : 0;
         // One event frame identifies a simultaneous trajectory/diagnostics/checkpoint save.
         std::size_t eventIndex = restarting ? restart.eventIndex : 0;
 
-        const auto protectInput = [&](const std::filesystem::path &destination) {
-            for (const auto &input :
-                 {parameterFile, params.initialConditionFile, params.restartFile})
-                if (!input.empty() && sameFile(destination, input))
-                    throw std::runtime_error("output path would overwrite input file: " + input);
-        };
-        const auto checkCheckpointDestination = [&](std::size_t index) {
-            const auto destination = checkpointPath(paths.checkpoints.string(), index);
-            protectInput(destination);
-            if (sameFile(destination, paths.trajectory) || sameFile(destination, paths.diagnostics))
-                throw std::runtime_error("checkpoint and CSV output paths must be different");
-        };
         // Detect the common rerun/restart collision before opening and possibly truncating CSVs.
         if (restarting && restart.outputIndex == std::numeric_limits<std::size_t>::max())
             throw std::runtime_error("checkpoint index overflow");
@@ -265,37 +388,10 @@ int main(int argc, char **argv) {
         std::unique_ptr<TrajectoryWriter> trajectory;
         std::unique_ptr<DiagnosticsWriter> diagnostics;
         if (backendIsRoot()) {
-            // Check all managed destinations before replacing any artefact.
-            const auto trajectoryPath = std::filesystem::weakly_canonical(paths.trajectory);
-            const auto diagnosticsPath = std::filesystem::weakly_canonical(paths.diagnostics);
-            if (sameFile(trajectoryPath, diagnosticsPath))
-                throw std::runtime_error(
-                    "managed trajectory and diagnostics paths must be different");
-            protectInput(trajectoryPath);
-            protectInput(diagnosticsPath);
-            checkCheckpointDestination(firstCheckpointIndex);
-            if (hasManagedRunOutput(paths)) {
-                if (!params.overwriteRun)
-                    throw std::runtime_error(
-                        "run directory already contains solver output: " +
-                        paths.directory.string() +
-                        " (choose another runDirectory or set overwriteRun true)");
-                removeManagedRunOutput(paths);
-            }
-            trajectory = std::make_unique<TrajectoryWriter>(paths.trajectory.string(), false);
-            diagnostics =
-                std::make_unique<DiagnosticsWriter>(paths.diagnostics.string(), initial, false);
-            std::cout << "backend=" << backendName() << '\n'
-                      << "trajectory="
-                      << std::filesystem::absolute(paths.trajectory).lexically_normal()
-                      << " interval=" << schedule.trajectoryInterval << '\n'
-                      << "diagnostics="
-                      << std::filesystem::absolute(paths.diagnostics).lexically_normal()
-                      << " interval=" << schedule.diagnosticsInterval << '\n'
-                      << "checkpoints="
-                      << std::filesystem::absolute(paths.checkpoints).lexically_normal()
-                      << " interval=" << schedule.checkpointInterval << '\n'
-                      << std::flush;
+            RunWriters writers = openRunWriters(paths, params, parameterFile, initial, schedule,
+                                                firstCheckpointIndex);
+            trajectory = std::move(writers.trajectory);
+            diagnostics = std::move(writers.diagnostics);
         }
 
         const auto synchronizeDeviceState = [&] {
@@ -321,7 +417,7 @@ int main(int argc, char **argv) {
                 diagnostics->write(time, eventIndex, current, segmentReference,
                                    eventState.removedPairs, eventState.removedUpperPairs,
                                    eventState.reinjectedPairs);
-                printDiagnostics(time, acceptedSteps, current, initial, params.boundaryCondition,
+                printDiagnostics(time, acceptedSteps, current, initial, params.boundary,
                                  segmentReference, eventState.removedPairs,
                                  eventState.removedUpperPairs,
                                  eventState.reinjectedPairs);
@@ -330,7 +426,7 @@ int main(int argc, char **argv) {
         const auto writeCurrentCheckpoint = [&] {
             synchronizeDeviceState();
             if (backendIsRoot()) {
-                checkCheckpointDestination(outputIndex);
+                validateCheckpointDestination(paths, outputIndex, parameterFile, params);
                 writeCheckpoint(paths.checkpoints, vortices, initial, params, segmentReference,
                                 dipoles.state(), schedule,
                                 {time, dt, nextOutput, acceptedSteps, outputIndex, eventIndex,
@@ -349,21 +445,21 @@ int main(int argc, char **argv) {
                                eventIndex, restarting);
 
         const auto takeStep = [&](double stepSize) {
-            StepResult result{stepSize, dt, 0.0, 0};
+            StepResult step{stepSize, dt, 0.0, 0};
             if (deviceStepping) {
                 if (params.integrator == IntegratorKind::rk4)
                     kernel->deviceRk4Step(stepSize);
                 else
-                    result = kernel->deviceDopri5Step(
+                    step = kernel->deviceDopri5Step(
                         stepSize, params.absoluteTolerance, params.relativeTolerance,
                         params.minimumTimeStep, params.maximumTimeStep);
                 hostStateCurrent = false;
             } else if (params.integrator == IntegratorKind::rk4) {
                 integrator.rk4Step(vortices, stepSize, *kernel);
             } else {
-                result = integrator.dopri5Step(vortices, stepSize, *kernel, params);
+                step = integrator.dopri5Step(vortices, stepSize, *kernel, params);
             }
-            return result;
+            return step;
         };
         const auto advanceClock = [&](double &next, double interval) {
             do {
@@ -387,9 +483,9 @@ int main(int argc, char **argv) {
                           schedule.nextCheckpointTime - time, timeToDipoleRemoval});
             if (!(time + stepSize > time))
                 throw std::runtime_error("timestep cannot advance simulation time");
-            const StepResult result = takeStep(stepSize);
-            const double acceptedStep = result.acceptedTimeStep;
-            dt = result.suggestedTimeStep;
+            const StepResult step = takeStep(stepSize);
+            const double acceptedStep = step.acceptedTimeStep;
+            dt = step.suggestedTimeStep;
 
             if (!std::isfinite(acceptedStep) || !(time + acceptedStep > time))
                 throw std::runtime_error("accepted timestep cannot advance simulation time");

@@ -38,7 +38,7 @@ struct Checkpoint {
     std::size_t eventIndex = 0;
     double coreRadius = 0.0;
     IntegratorKind integrator = IntegratorKind::dopri5;
-    std::string boundaryCondition = "infinite";
+    BoundaryKind boundary = BoundaryKind::infinite;
     double geometryLengthX = 0.0;
     double geometryLengthY = 0.0;
     int periodicImageLayers = 0;

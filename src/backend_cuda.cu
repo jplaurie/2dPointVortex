@@ -232,11 +232,11 @@ class CudaKernel final : public VelocityKernel {
   public:
     explicit CudaKernel(const SimParams &params)
         : params_(params), cpu_(makeReferenceKernel(params)) {
-        if (params.boundaryCondition == "infinite")
+        if (params.boundary == BoundaryKind::infinite)
             geometry_ = Geometry::infinite;
-        else if (params.boundaryCondition == "periodic_x")
+        else if (params.boundary == BoundaryKind::periodic_x)
             geometry_ = Geometry::periodic_x;
-        else if (params.boundaryCondition == "periodic")
+        else if (params.boundary == BoundaryKind::periodic)
             geometry_ = Geometry::periodic;
         else
             geometry_ = Geometry::disk;

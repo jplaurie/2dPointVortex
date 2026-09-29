@@ -81,6 +81,11 @@ and dipole removal/reinjection.
 The velocity kernel is deliberately separate from the timestepper, so a new geometry or faster
 kernel can be added without rewriting the integrators.
 
+Configuration text is converted at the input boundary into typed values such as `BoundaryKind`,
+`IntegratorKind`, and `InitialConditionKind`; solver code does not compare parameter strings.
+`read.cpp` keeps line parsing, value assignment, and cross-parameter validation as separate steps,
+which makes new settings easier to add without changing the numerical code.
+
 ## Build
 
 ### CMake (recommended)

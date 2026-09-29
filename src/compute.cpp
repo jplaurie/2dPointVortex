@@ -10,20 +10,21 @@ namespace {
 
 Invariants computeMoments(const VortexSystem &vortices) {
     vortices.validate();
-    Invariants result;
+    Invariants moments;
     for (std::size_t i = 0; i < vortices.size(); ++i) {
         const double gamma = vortices.circulation[i];
-        result.circulation += gamma;
-        result.linearImpulseX += gamma * vortices.x[i];
-        result.linearImpulseY += gamma * vortices.y[i];
-        result.angularImpulse +=
+        moments.circulation += gamma;
+        moments.linearImpulseX += gamma * vortices.x[i];
+        moments.linearImpulseY += gamma * vortices.y[i];
+        moments.angularImpulse +=
             gamma * (vortices.x[i] * vortices.x[i] + vortices.y[i] * vortices.y[i]);
     }
     for (double value :
-         {result.circulation, result.linearImpulseX, result.linearImpulseY, result.angularImpulse})
+         {moments.circulation, moments.linearImpulseX, moments.linearImpulseY,
+          moments.angularImpulse})
         if (!std::isfinite(value))
             throw std::runtime_error("non-finite vortex moment; check input scales");
-    return result;
+    return moments;
 }
 
 } // namespace
@@ -137,7 +138,7 @@ Invariants computeInvariants(const VortexSystem &vortices, double coreRadius) {
         (coreRadius > 0.0 && coreRadius * coreRadius == 0.0))
         throw std::invalid_argument(
             "core radius is negative or outside the supported numeric range");
-    Invariants result = computeMoments(vortices);
+    Invariants invariants = computeMoments(vortices);
     const double epsilonSquared = coreRadius * coreRadius;
     for (std::size_t i = 0; i < vortices.size(); ++i) {
         for (std::size_t j = i + 1; j < vortices.size(); ++j) {
@@ -146,20 +147,20 @@ Invariants computeInvariants(const VortexSystem &vortices, double coreRadius) {
             const double r2 = dx * dx + dy * dy + epsilonSquared;
             if (r2 == 0.0)
                 throw std::runtime_error("coincident vortices");
-            result.hamiltonian -= vortices.circulation[i] * vortices.circulation[j] * std::log(r2) /
-                                  (4.0 * std::numbers::pi);
+            invariants.hamiltonian -= vortices.circulation[i] * vortices.circulation[j] *
+                                      std::log(r2) / (4.0 * std::numbers::pi);
         }
     }
-    if (!std::isfinite(result.hamiltonian))
+    if (!std::isfinite(invariants.hamiltonian))
         throw std::runtime_error("non-finite Hamiltonian; check input scales");
-    return result;
+    return invariants;
 }
 Invariants computeInvariants(const VortexSystem &vortices, const VelocityKernel &kernel) {
-    Invariants result = computeMoments(vortices);
-    result.hamiltonian = kernel.hamiltonian(vortices);
-    if (!std::isfinite(result.hamiltonian))
+    Invariants invariants = computeMoments(vortices);
+    invariants.hamiltonian = kernel.hamiltonian(vortices);
+    if (!std::isfinite(invariants.hamiltonian))
         throw std::runtime_error("non-finite Hamiltonian; check input scales");
-    return result;
+    return invariants;
 }
 
 PeriodicXKernel::PeriodicXKernel(double lengthX) : lengthX_(lengthX) {

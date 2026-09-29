@@ -89,8 +89,11 @@ class DiskKernel final : public VelocityKernel {
     double radiusSquared_;
 };
 struct Invariants {
-    double circulation = 0.0, linearImpulseX = 0.0, linearImpulseY = 0.0;
-    double angularImpulse = 0.0, hamiltonian = 0.0;
+    double circulation = 0.0;
+    double linearImpulseX = 0.0;
+    double linearImpulseY = 0.0;
+    double angularImpulse = 0.0;
+    double hamiltonian = 0.0;
 };
 Invariants computeInvariants(const VortexSystem &, double coreRadius = 0.0);
 Invariants computeInvariants(const VortexSystem &, const VelocityKernel &kernel);

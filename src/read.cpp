@@ -13,26 +13,26 @@
 namespace {
 double parseDouble(const std::string &value) {
     std::size_t parsed = 0;
-    const double result = std::stod(value, &parsed);
-    if (parsed != value.size() || !std::isfinite(result))
+    const double parsedValue = std::stod(value, &parsed);
+    if (parsed != value.size() || !std::isfinite(parsedValue))
         throw std::invalid_argument("expected a finite floating-point value");
-    return result;
+    return parsedValue;
 }
 unsigned long long parseUnsigned(const std::string &value) {
     if (!value.empty() && value.front() == '-')
         throw std::invalid_argument("expected a non-negative integer");
     std::size_t parsed = 0;
-    const auto result = std::stoull(value, &parsed);
+    const auto parsedValue = std::stoull(value, &parsed);
     if (parsed != value.size())
         throw std::invalid_argument("expected an integer");
-    return result;
+    return parsedValue;
 }
 int parseInt(const std::string &value) {
     std::size_t parsed = 0;
-    const int result = std::stoi(value, &parsed);
+    const int parsedValue = std::stoi(value, &parsed);
     if (parsed != value.size())
         throw std::invalid_argument("expected an integer");
-    return result;
+    return parsedValue;
 }
 
 template <typename T> struct Parameter {
@@ -50,85 +50,14 @@ bool assignParameter(const std::string &key, SimParams &params,
         }
     return false;
 }
-} // namespace
 
-void SimParams::validate() const {
-    for (double value : {timeStep, endTime, outputTime, coreRadius, absoluteTolerance,
-                         relativeTolerance, minimumTimeStep, maximumTimeStep, boxLengthX,
-                         boxLengthY, diskRadius, dipoleRemovalDistance,
-                         dipoleRemovalUpperDistance, dipoleRemovalInterval})
-        if (!std::isfinite(value))
-            throw std::invalid_argument("simulation parameters must be finite");
-    for (double radius :
-         {coreRadius, diskRadius, dipoleRemovalDistance, dipoleRemovalUpperDistance})
-        if (!std::isfinite(radius * radius) || (radius > 0.0 && radius * radius == 0.0))
-            throw std::invalid_argument(
-                "radius or distance is outside the supported numeric range");
-    if (vortexCount == 0 && initialCondition != InitialConditionKind::file &&
-        restartFile.empty())
-        throw std::invalid_argument("N must be positive");
-    if (!(timeStep > 0.0))
-        throw std::invalid_argument("timeStep must be positive");
-    if (!(endTime >= 0.0))
-        throw std::invalid_argument("endTime must be non-negative");
-    if (!(outputTime > 0.0))
-        throw std::invalid_argument("outputTime must be positive");
-    if (!std::isfinite(outputTime) || !std::isfinite(diagnosticsInterval()) ||
-        !(diagnosticsInterval() > 0.0) || !std::isfinite(checkpointInterval()) ||
-        !(checkpointInterval() > 0.0))
-        throw std::invalid_argument("output intervals must be finite and positive");
-    if (!(coreRadius >= 0.0))
-        throw std::invalid_argument("coreRadius must be non-negative");
-    if (!(absoluteTolerance > 0.0) || !(relativeTolerance >= 0.0))
-        throw std::invalid_argument("invalid integration tolerances");
-    if (!(minimumTimeStep > 0.0) || !(maximumTimeStep >= minimumTimeStep))
-        throw std::invalid_argument("invalid timestep bounds");
-    if (numThreads < 0)
-        throw std::invalid_argument("numThreads must be non-negative");
-    if (boundaryCondition != "infinite" && boundaryCondition != "periodic_x" &&
-        boundaryCondition != "periodic" && boundaryCondition != "disk")
-        throw std::invalid_argument("invalid boundaryCondition");
-    if (!(boxLengthX > 0.0) || !(boxLengthY > 0.0) || !(diskRadius > 0.0) ||
-        periodicImageLayers < 0 || periodicImageLayers > 64)
-        throw std::invalid_argument("invalid geometry parameters or periodicImageLayers > 64");
-    if (boundaryCondition != "infinite" && coreRadius != 0.0)
-        throw std::invalid_argument("non-infinite geometries currently require coreRadius 0");
-    if (!(dipoleRemovalDistance > 0.0))
-        throw std::invalid_argument("dipoleRemovalDistance must be positive");
-    if (!(dipoleRemovalUpperDistance > 0.0))
-        throw std::invalid_argument("dipoleRemovalUpperDistance must be positive");
-    if (dipoleRemovalUpper && !dipoleRemoval)
-        throw std::invalid_argument("dipoleRemovalUpper requires dipoleRemoval true");
-    if (dipoleRemovalUpper && !(dipoleRemovalUpperDistance > dipoleRemovalDistance))
-        throw std::invalid_argument(
-            "dipoleRemovalUpperDistance must exceed dipoleRemovalDistance");
-    if (!(dipoleRemovalInterval >= 0.0))
-        throw std::invalid_argument("dipoleRemovalInterval must be non-negative");
-    if (!dipoleRemoval && dipoleReinjection != ReinjectionMode::none)
-        throw std::invalid_argument("dipoleReinjection requires dipoleRemoval true");
-    if (boundaryCondition != "periodic" && boundaryCondition != "disk" &&
-        dipoleReinjection != ReinjectionMode::none)
-        throw std::invalid_argument(
-            "dipole reinjection is available only for periodic and disk geometries");
-    if (boundaryCondition == "periodic" &&
-        std::abs(boxLengthX - boxLengthY) > 1e-13 * std::max(boxLengthX, boxLengthY))
-        throw std::invalid_argument("Weiss-McWilliams periodic geometry requires a square box");
-    if (runDirectory.empty())
-        throw std::invalid_argument("runDirectory must not be empty");
-    if (initialCondition == InitialConditionKind::file && initialConditionFile.empty())
-        throw std::invalid_argument(
-            "initialCondition file requires initialConditionFile");
-    if (initialCondition != InitialConditionKind::file && !initialConditionFile.empty())
-        throw std::invalid_argument(
-            "initialConditionFile requires initialCondition file");
-}
-SimParams loadParams(const std::string &filename) {
-    std::ifstream input(filename);
-    if (!input)
-        throw std::runtime_error("cannot open parameter file: " + filename);
-    SimParams p;
+struct ParameterParseState {
     std::optional<std::size_t> legacyNumSteps;
-    bool explicitEndTime = false;
+    bool hasExplicitEndTime = false;
+};
+
+bool assignCommonParameter(const std::string &key, const std::string &value, SimParams &params,
+                           ParameterParseState &state) {
     static constexpr Parameter<double> doubles[] = {
         {"timeStep", &SimParams::timeStep},
         {"endTime", &SimParams::endTime},
@@ -155,89 +84,274 @@ SimParams loadParams(const std::string &filename) {
         {"periodicImageLayers", &SimParams::periodicImageLayers},
     };
     static constexpr Parameter<std::string> strings[] = {
-        {"boundaryCondition", &SimParams::boundaryCondition},
         {"initialConditionFile", &SimParams::initialConditionFile},
         {"restartFile", &SimParams::restartFile},
         {"runDirectory", &SimParams::runDirectory},
     };
+
+    if (assignParameter(key, params, doubles, value, parseDouble)) {
+        if (key == "endTime")
+            state.hasExplicitEndTime = true;
+        return true;
+    }
+    return assignParameter(key, params, optionalDoubles, value, parseDouble) ||
+           assignParameter(key, params, integers, value, parseInt) ||
+           assignParameter(key, params, strings, value,
+                           [](const std::string &text) { return text; });
+}
+
+bool assignBooleanParameter(const std::string &key, const std::string &value,
+                            SimParams &params) {
+    if (key != "dipoleRemoval" && key != "dipoleRemovalUpper" && key != "overwriteRun")
+        return false;
+
+    const bool enabled = value == "true" || value == "1";
+    if (!enabled && value != "false" && value != "0")
+        throw std::invalid_argument(key + " must be true or false");
+
+    if (key == "dipoleRemoval")
+        params.dipoleRemoval = enabled;
+    else if (key == "dipoleRemovalUpper")
+        params.dipoleRemovalUpper = enabled;
+    else
+        params.overwriteRun = enabled;
+    return true;
+}
+
+bool assignEnumParameter(const std::string &key, const std::string &value, SimParams &params) {
+    if (key == "boundaryCondition") {
+        const auto boundary = boundaryFromString(value);
+        if (!boundary) {
+            throw std::invalid_argument(
+                "boundaryCondition must be infinite, periodic_x, periodic, or disk");
+        }
+        params.boundary = *boundary;
+        return true;
+    }
+    if (key == "dipoleReinjection") {
+        const auto mode = reinjectionFromString(value);
+        if (!mode)
+            throw std::invalid_argument(
+                "dipoleReinjection must be none, independent, or paired");
+        params.dipoleReinjection = *mode;
+        return true;
+    }
+    if (key == "initialCondition") {
+        const auto condition = initialConditionFromString(value);
+        if (!condition) {
+            throw std::invalid_argument(
+                "initialCondition must be random, ring, single, dipole, or file");
+        }
+        params.initialCondition = *condition;
+        return true;
+    }
+    if (key == "integrator") {
+        const auto integrator = integratorFromString(value);
+        if (!integrator)
+            throw std::invalid_argument("integrator must be rk4 or dopri5");
+        params.integrator = *integrator;
+        return true;
+    }
+    return false;
+}
+
+bool assignLegacyParameter(const std::string &key, const std::string &value, SimParams &params,
+                           ParameterParseState &state) {
+    if (key == "N") {
+        const auto count = parseUnsigned(value);
+        if (count > std::numeric_limits<std::size_t>::max())
+            throw std::out_of_range("N is too large");
+        params.vortexCount = static_cast<std::size_t>(count);
+        return true;
+    }
+    if (key == "numSteps") {
+        state.legacyNumSteps = parseUnsigned(value);
+        return true;
+    }
+    if (key == "coreSize") {
+        params.coreRadius = std::sqrt(parseDouble(value));
+        return true;
+    }
+    if (key == "randomSeed") {
+        params.randomSeed = parseUnsigned(value);
+        return true;
+    }
+    return false;
+}
+
+void assignParameterValue(const std::string &key, const std::string &value, SimParams &params,
+                          ParameterParseState &state) {
+    if (assignCommonParameter(key, value, params, state) ||
+        assignBooleanParameter(key, value, params) || assignEnumParameter(key, value, params) ||
+        assignLegacyParameter(key, value, params, state)) {
+        return;
+    }
+    throw std::invalid_argument("unknown parameter: " + key);
+}
+
+void parseParameterLine(std::string line, std::size_t lineNumber, SimParams &params,
+                        ParameterParseState &state) {
+    const auto comment = line.find('#');
+    if (comment != std::string::npos)
+        line.erase(comment);
+
+    std::istringstream fields(line);
+    std::string key;
+    if (!(fields >> key))
+        return;
+
+    std::string value;
+    if (!(fields >> value))
+        throw std::runtime_error("missing value on parameter line " + std::to_string(lineNumber));
+
+    try {
+        assignParameterValue(key, value, params, state);
+        std::string trailing;
+        if (fields >> trailing)
+            throw std::invalid_argument("unexpected extra value: " + trailing);
+    } catch (const std::exception &error) {
+        throw std::runtime_error("parameter line " + std::to_string(lineNumber) + ": " +
+                                 error.what());
+    }
+}
+
+void validateNumericRanges(const SimParams &params) {
+    for (double value : {params.timeStep, params.endTime, params.outputTime, params.coreRadius,
+                         params.absoluteTolerance, params.relativeTolerance,
+                         params.minimumTimeStep, params.maximumTimeStep, params.boxLengthX,
+                         params.boxLengthY, params.diskRadius, params.dipoleRemovalDistance,
+                         params.dipoleRemovalUpperDistance, params.dipoleRemovalInterval}) {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("simulation parameters must be finite");
+    }
+
+    for (double radius : {params.coreRadius, params.diskRadius, params.dipoleRemovalDistance,
+                          params.dipoleRemovalUpperDistance}) {
+        if (!std::isfinite(radius * radius) || (radius > 0.0 && radius * radius == 0.0)) {
+            throw std::invalid_argument(
+                "radius or distance is outside the supported numeric range");
+        }
+    }
+}
+
+void validateTimeIntegration(const SimParams &params) {
+    if (params.vortexCount == 0 && params.initialCondition != InitialConditionKind::file &&
+        params.restartFile.empty())
+        throw std::invalid_argument("N must be positive");
+    if (!(params.timeStep > 0.0))
+        throw std::invalid_argument("timeStep must be positive");
+    if (!(params.endTime >= 0.0))
+        throw std::invalid_argument("endTime must be non-negative");
+    if (!(params.outputTime > 0.0))
+        throw std::invalid_argument("outputTime must be positive");
+    if (!std::isfinite(params.outputTime) ||
+        !std::isfinite(params.diagnosticsInterval()) ||
+        !(params.diagnosticsInterval() > 0.0) ||
+        !std::isfinite(params.checkpointInterval()) ||
+        !(params.checkpointInterval() > 0.0)) {
+        throw std::invalid_argument("output intervals must be finite and positive");
+    }
+    if (!(params.coreRadius >= 0.0))
+        throw std::invalid_argument("coreRadius must be non-negative");
+    if (!(params.absoluteTolerance > 0.0) || !(params.relativeTolerance >= 0.0))
+        throw std::invalid_argument("invalid integration tolerances");
+    if (!(params.minimumTimeStep > 0.0) ||
+        !(params.maximumTimeStep >= params.minimumTimeStep)) {
+        throw std::invalid_argument("invalid timestep bounds");
+    }
+    if (params.numThreads < 0)
+        throw std::invalid_argument("numThreads must be non-negative");
+}
+
+void validateGeometry(const SimParams &params) {
+    switch (params.boundary) {
+    case BoundaryKind::infinite:
+    case BoundaryKind::periodic_x:
+    case BoundaryKind::periodic:
+    case BoundaryKind::disk:
+        break;
+    default:
+        throw std::invalid_argument("invalid boundaryCondition");
+    }
+    if (!(params.boxLengthX > 0.0) || !(params.boxLengthY > 0.0) ||
+        !(params.diskRadius > 0.0) || params.periodicImageLayers < 0 ||
+        params.periodicImageLayers > 64) {
+        throw std::invalid_argument("invalid geometry parameters or periodicImageLayers > 64");
+    }
+    if (params.boundary != BoundaryKind::infinite && params.coreRadius != 0.0) {
+        throw std::invalid_argument("non-infinite geometries currently require coreRadius 0");
+    }
+}
+
+void validateDipoleSettings(const SimParams &params) {
+    if (!(params.dipoleRemovalDistance > 0.0))
+        throw std::invalid_argument("dipoleRemovalDistance must be positive");
+    if (!(params.dipoleRemovalUpperDistance > 0.0))
+        throw std::invalid_argument("dipoleRemovalUpperDistance must be positive");
+    if (params.dipoleRemovalUpper && !params.dipoleRemoval)
+        throw std::invalid_argument("dipoleRemovalUpper requires dipoleRemoval true");
+    if (params.dipoleRemovalUpper &&
+        !(params.dipoleRemovalUpperDistance > params.dipoleRemovalDistance)) {
+        throw std::invalid_argument(
+            "dipoleRemovalUpperDistance must exceed dipoleRemovalDistance");
+    }
+    if (!(params.dipoleRemovalInterval >= 0.0))
+        throw std::invalid_argument("dipoleRemovalInterval must be non-negative");
+    if (!params.dipoleRemoval && params.dipoleReinjection != ReinjectionMode::none)
+        throw std::invalid_argument("dipoleReinjection requires dipoleRemoval true");
+    if (params.boundary != BoundaryKind::periodic && params.boundary != BoundaryKind::disk &&
+        params.dipoleReinjection != ReinjectionMode::none) {
+        throw std::invalid_argument(
+            "dipole reinjection is available only for periodic and disk geometries");
+    }
+}
+
+void validateInputAndOutput(const SimParams &params) {
+    if (params.boundary == BoundaryKind::periodic &&
+        std::abs(params.boxLengthX - params.boxLengthY) >
+            1e-13 * std::max(params.boxLengthX, params.boxLengthY)) {
+        throw std::invalid_argument("Weiss-McWilliams periodic geometry requires a square box");
+    }
+    if (params.runDirectory.empty())
+        throw std::invalid_argument("runDirectory must not be empty");
+    if (params.initialCondition == InitialConditionKind::file &&
+        params.initialConditionFile.empty()) {
+        throw std::invalid_argument("initialCondition file requires initialConditionFile");
+    }
+    if (params.initialCondition != InitialConditionKind::file &&
+        !params.initialConditionFile.empty()) {
+        throw std::invalid_argument("initialConditionFile requires initialCondition file");
+    }
+}
+} // namespace
+
+void SimParams::validate() const {
+    validateNumericRanges(*this);
+    validateTimeIntegration(*this);
+    validateGeometry(*this);
+    validateDipoleSettings(*this);
+    validateInputAndOutput(*this);
+}
+SimParams loadParams(const std::string &filename) {
+    std::ifstream input(filename);
+    if (!input)
+        throw std::runtime_error("cannot open parameter file: " + filename);
+    SimParams params;
+    ParameterParseState parseState;
     std::string line;
     std::size_t lineNumber = 0;
     // Strict parsing prevents a misspelled option from silently using a default.
     while (std::getline(input, line)) {
         ++lineNumber;
-        const auto comment = line.find('#');
-        if (comment != std::string::npos)
-            line.erase(comment);
-        std::istringstream fields(line);
-        std::string key, value;
-        if (!(fields >> key))
-            continue;
-        if (!(fields >> value))
-            throw std::runtime_error("missing value on parameter line " +
-                                     std::to_string(lineNumber));
-        try {
-            if (assignParameter(key, p, doubles, value, parseDouble)) {
-                if (key == "endTime")
-                    explicitEndTime = true;
-            } else if (assignParameter(key, p, optionalDoubles, value, parseDouble) ||
-                       assignParameter(key, p, integers, value, parseInt) ||
-                       assignParameter(key, p, strings, value,
-                                       [](const std::string &text) { return text; })) {
-            } else if (key == "N") {
-                const auto count = parseUnsigned(value);
-                if (count > std::numeric_limits<std::size_t>::max())
-                    throw std::out_of_range("N is too large");
-                p.vortexCount = static_cast<std::size_t>(count);
-            } else if (key == "numSteps")
-                legacyNumSteps = parseUnsigned(value);
-            else if (key == "coreSize")
-                p.coreRadius = std::sqrt(parseDouble(value));
-            else if (key == "randomSeed")
-                p.randomSeed = parseUnsigned(value);
-            else if (key == "dipoleRemoval" || key == "dipoleRemovalUpper" ||
-                     key == "overwriteRun") {
-                const bool enabled = value == "true" || value == "1";
-                if (!enabled && value != "false" && value != "0")
-                    throw std::invalid_argument(key + " must be true or false");
-                if (key == "dipoleRemoval")
-                    p.dipoleRemoval = enabled;
-                else if (key == "dipoleRemovalUpper")
-                    p.dipoleRemovalUpper = enabled;
-                else
-                    p.overwriteRun = enabled;
-            } else if (key == "dipoleReinjection") {
-                const auto mode = reinjectionFromString(value);
-                if (!mode)
-                    throw std::invalid_argument(
-                        "dipoleReinjection must be none, independent, or paired");
-                p.dipoleReinjection = *mode;
-            } else if (key == "initialCondition") {
-                const auto condition = initialConditionFromString(value);
-                if (!condition)
-                    throw std::invalid_argument(
-                        "initialCondition must be random, ring, single, dipole, or file");
-                p.initialCondition = *condition;
-            } else if (key == "integrator") {
-                const auto integrator = integratorFromString(value);
-                if (!integrator)
-                    throw std::invalid_argument("integrator must be rk4 or dopri5");
-                p.integrator = *integrator;
-            } else
-                throw std::invalid_argument("unknown parameter: " + key);
-            std::string trailing;
-            if (fields >> trailing)
-                throw std::invalid_argument("unexpected extra value: " + trailing);
-        } catch (const std::exception &e) {
-            throw std::runtime_error("parameter line " + std::to_string(lineNumber) + ": " +
-                                     e.what());
-        }
+        parseParameterLine(line, lineNumber, params, parseState);
     }
     if (input.bad())
         throw std::runtime_error("failed while reading parameter file: " + filename);
-    if (legacyNumSteps && !explicitEndTime)
-        p.endTime = p.timeStep * static_cast<double>(*legacyNumSteps);
-    p.validate();
-    return p;
+    if (parseState.legacyNumSteps && !parseState.hasExplicitEndTime) {
+        params.endTime = params.timeStep * static_cast<double>(*parseState.legacyNumSteps);
+    }
+    params.validate();
+    return params;
 }
 VortexSystem loadVortices(const std::string &filename) {
     std::ifstream input(filename);

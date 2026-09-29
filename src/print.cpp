@@ -50,21 +50,21 @@ DiagnosticsWriter::DiagnosticsWriter(const std::string &filename, const Invarian
            "removed_upper_pairs,reinjected_pairs\n";
     output_.flush();
 }
-void DiagnosticsWriter::write(double time, std::size_t frame, const Invariants &value,
+void DiagnosticsWriter::write(double time, std::size_t frame, const Invariants &current,
                               const Invariants &segmentReference, std::size_t removedPairs,
                               std::size_t removedUpperPairs, std::size_t reinjectedPairs) {
-    output_ << time << ',' << frame << ',' << value.circulation << ',' << value.linearImpulseX
-            << ',' << value.linearImpulseY << ',' << value.angularImpulse << ','
-            << value.hamiltonian << ',' << value.circulation - initial_.circulation << ','
-            << value.linearImpulseX - initial_.linearImpulseX << ','
-            << value.linearImpulseY - initial_.linearImpulseY << ','
-            << value.angularImpulse - initial_.angularImpulse << ','
-            << value.hamiltonian - initial_.hamiltonian << ','
-            << value.circulation - segmentReference.circulation << ','
-            << value.linearImpulseX - segmentReference.linearImpulseX << ','
-            << value.linearImpulseY - segmentReference.linearImpulseY << ','
-            << value.angularImpulse - segmentReference.angularImpulse << ','
-            << value.hamiltonian - segmentReference.hamiltonian << ',' << removedPairs << ','
+    output_ << time << ',' << frame << ',' << current.circulation << ',' << current.linearImpulseX
+            << ',' << current.linearImpulseY << ',' << current.angularImpulse << ','
+            << current.hamiltonian << ',' << current.circulation - initial_.circulation << ','
+            << current.linearImpulseX - initial_.linearImpulseX << ','
+            << current.linearImpulseY - initial_.linearImpulseY << ','
+            << current.angularImpulse - initial_.angularImpulse << ','
+            << current.hamiltonian - initial_.hamiltonian << ','
+            << current.circulation - segmentReference.circulation << ','
+            << current.linearImpulseX - segmentReference.linearImpulseX << ','
+            << current.linearImpulseY - segmentReference.linearImpulseY << ','
+            << current.angularImpulse - segmentReference.angularImpulse << ','
+            << current.hamiltonian - segmentReference.hamiltonian << ',' << removedPairs << ','
             << removedUpperPairs << ',' << reinjectedPairs << '\n';
     output_.flush();
     if (!output_)
@@ -102,7 +102,7 @@ void writeRecord(const std::filesystem::path &path, const SimParams &params,
            << "integrator " << toString(params.integrator) << '\n'
            << "coreRadius " << params.coreRadius << '\n'
            << "numThreads " << params.numThreads << '\n'
-           << "boundaryCondition " << params.boundaryCondition << '\n'
+           << "boundaryCondition " << toString(params.boundary) << '\n'
            << "boxLengthX " << params.boxLengthX << '\n'
            << "boxLengthY " << params.boxLengthY << '\n'
            << "periodicImageLayers " << params.periodicImageLayers << '\n'
@@ -148,30 +148,31 @@ void writeRunProvenance(const SimParams &params, const std::string &parameterFil
     writeRecord(root / "resolved_parameters.txt", params, parameterFile, backend, runtimeDetails,
                 startTime, startFrame, restarting, segment);
 }
-void printDiagnostics(double time, std::size_t steps, const Invariants &value,
-                      const Invariants &initial, const std::string &boundaryCondition,
+void printDiagnostics(double time, std::size_t steps, const Invariants &current,
+                      const Invariants &initial, BoundaryKind boundary,
                       const Invariants &segmentReference, std::size_t removedPairs,
                       std::size_t removedUpperPairs, std::size_t reinjectedPairs) {
     std::cout << std::setprecision(10) << "time=" << time << " steps=" << steps
-              << " circulation=" << value.circulation
-              << " dCirculation=" << value.circulation - initial.circulation
-              << " segmentDCirculation=" << value.circulation - segmentReference.circulation
-              << " H=" << value.hamiltonian << " dH=" << value.hamiltonian - initial.hamiltonian
-              << " segmentDH=" << value.hamiltonian - segmentReference.hamiltonian;
+              << " circulation=" << current.circulation
+              << " dCirculation=" << current.circulation - initial.circulation
+              << " segmentDCirculation=" << current.circulation - segmentReference.circulation
+              << " H=" << current.hamiltonian
+              << " dH=" << current.hamiltonian - initial.hamiltonian
+              << " segmentDH=" << current.hamiltonian - segmentReference.hamiltonian;
 
-    if (boundaryCondition == "infinite" || boundaryCondition == "periodic_x" ||
-        boundaryCondition == "periodic") {
-        std::cout << " Ix=" << value.linearImpulseX
-                  << " dIx=" << value.linearImpulseX - initial.linearImpulseX
-                  << " segmentDIx=" << value.linearImpulseX - segmentReference.linearImpulseX
-                  << " Iy=" << value.linearImpulseY
-                  << " dIy=" << value.linearImpulseY - initial.linearImpulseY
-                  << " segmentDIy=" << value.linearImpulseY - segmentReference.linearImpulseY;
+    if (boundary == BoundaryKind::infinite || boundary == BoundaryKind::periodic_x ||
+        boundary == BoundaryKind::periodic) {
+        std::cout << " Ix=" << current.linearImpulseX
+                  << " dIx=" << current.linearImpulseX - initial.linearImpulseX
+                  << " segmentDIx=" << current.linearImpulseX - segmentReference.linearImpulseX
+                  << " Iy=" << current.linearImpulseY
+                  << " dIy=" << current.linearImpulseY - initial.linearImpulseY
+                  << " segmentDIy=" << current.linearImpulseY - segmentReference.linearImpulseY;
     }
-    if (boundaryCondition == "infinite" || boundaryCondition == "disk") {
-        std::cout << " L=" << value.angularImpulse
-                  << " dL=" << value.angularImpulse - initial.angularImpulse
-                  << " segmentDL=" << value.angularImpulse - segmentReference.angularImpulse;
+    if (boundary == BoundaryKind::infinite || boundary == BoundaryKind::disk) {
+        std::cout << " L=" << current.angularImpulse
+                  << " dL=" << current.angularImpulse - initial.angularImpulse
+                  << " segmentDL=" << current.angularImpulse - segmentReference.angularImpulse;
     }
     std::cout << " removedPairs=" << removedPairs
               << " removedUpperPairs=" << removedUpperPairs

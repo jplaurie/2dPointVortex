@@ -60,7 +60,8 @@ void RungeKuttaIntegrator::rk4Step(VortexSystem &state, double dt, const Velocit
     state.y.swap(temporary_.y);
 }
 StepResult RungeKuttaIntegrator::dopri5Step(VortexSystem &state, double dt,
-                                            const VelocityKernel &kernel, const SimParams &p) {
+                                            const VelocityKernel &kernel,
+                                            const SimParams &params) {
     if (!std::isfinite(dt) || !(dt > 0.0))
         throw std::invalid_argument("timestep must be finite and positive");
     ensureSize(state);
@@ -91,11 +92,11 @@ StepResult RungeKuttaIntegrator::dopri5Step(VortexSystem &state, double dt,
                 yError += dt * (b5[s] - b4[s]) * stages_[s].y[i];
             }
             const double xScale =
-                p.absoluteTolerance +
-                p.relativeTolerance * std::max(std::abs(initial_.x[i]), std::abs(x5));
+                params.absoluteTolerance +
+                params.relativeTolerance * std::max(std::abs(initial_.x[i]), std::abs(x5));
             const double yScale =
-                p.absoluteTolerance +
-                p.relativeTolerance * std::max(std::abs(initial_.y[i]), std::abs(y5));
+                params.absoluteTolerance +
+                params.relativeTolerance * std::max(std::abs(initial_.y[i]), std::abs(y5));
             if (!std::isfinite(xError) || !std::isfinite(yError) || !std::isfinite(xScale) ||
                 !std::isfinite(yScale) || !(xScale > 0.0) || !(yScale > 0.0))
                 throw std::runtime_error("non-finite adaptive error estimate or invalid tolerance");
@@ -104,7 +105,8 @@ StepResult RungeKuttaIntegrator::dopri5Step(VortexSystem &state, double dt,
         }
         const double factor =
             error == 0.0 ? 5.0 : std::clamp(0.9 * std::pow(error, -0.2), 0.2, 5.0);
-        const double suggested = std::clamp(dt * factor, p.minimumTimeStep, p.maximumTimeStep);
+        const double suggested =
+            std::clamp(dt * factor, params.minimumTimeStep, params.maximumTimeStep);
         if (error <= 1.0) {
             state.x.swap(temporary_.x);
             state.y.swap(temporary_.y);
@@ -113,8 +115,8 @@ StepResult RungeKuttaIntegrator::dopri5Step(VortexSystem &state, double dt,
             fsalValid_ = true;
             return {dt, suggested, error, rejected};
         }
-        if (dt <= p.minimumTimeStep || ++rejected > 32)
+        if (dt <= params.minimumTimeStep || ++rejected > 32)
             throw std::runtime_error("adaptive integrator could not satisfy tolerance");
-        dt = std::max(p.minimumTimeStep, std::min(suggested, dt * 0.9));
+        dt = std::max(params.minimumTimeStep, std::min(suggested, dt * 0.9));
     }
 }

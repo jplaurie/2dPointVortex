@@ -2,14 +2,16 @@
 #include <stdexcept>
 
 std::unique_ptr<VelocityKernel> makeReferenceKernel(const SimParams &params) {
-    if (params.boundaryCondition == "infinite")
+    switch (params.boundary) {
+    case BoundaryKind::infinite:
         return std::make_unique<InfinitePlaneKernel>(params.coreRadius);
-    if (params.boundaryCondition == "periodic_x")
+    case BoundaryKind::periodic_x:
         return std::make_unique<PeriodicXKernel>(params.boxLengthX);
-    if (params.boundaryCondition == "periodic")
+    case BoundaryKind::periodic:
         return std::make_unique<PeriodicBoxKernel>(params.boxLengthX, params.boxLengthY,
                                                    params.periodicImageLayers);
-    if (params.boundaryCondition == "disk")
+    case BoundaryKind::disk:
         return std::make_unique<DiskKernel>(params.diskRadius);
-    throw std::invalid_argument("unsupported boundary condition: " + params.boundaryCondition);
+    }
+    throw std::invalid_argument("unsupported boundary condition");
 }

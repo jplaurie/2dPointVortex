@@ -122,7 +122,7 @@ void invalidNumericTests() {
     params.coreRadius = 1e200;
     rejects([&] { params.validate(); }, "overflowed core radius square");
     params = SimParams{};
-    params.boundaryCondition = "periodic_x";
+    params.boundary = BoundaryKind::periodic_x;
     params.validate();
     params.dipoleRemoval = true;
     params.dipoleReinjection = ReinjectionMode::paired;

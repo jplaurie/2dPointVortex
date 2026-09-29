@@ -17,7 +17,7 @@ class TrajectoryWriter {
 class DiagnosticsWriter {
   public:
     DiagnosticsWriter(const std::string &filename, const Invariants &initial, bool overwrite);
-    void write(double time, std::size_t frame, const Invariants &values,
+    void write(double time, std::size_t frame, const Invariants &current,
                const Invariants &segmentReference, std::size_t removedPairs,
                std::size_t removedUpperPairs, std::size_t reinjectedPairs);
 
@@ -29,7 +29,7 @@ void writeRunProvenance(const SimParams &params, const std::string &parameterFil
                         const std::string &backend, const std::string &runtimeDetails,
                         double startTime, std::size_t startFrame, bool restarting);
 void printDiagnostics(double time, std::size_t steps, const Invariants &current,
-                      const Invariants &initial, const std::string &boundaryCondition,
+                      const Invariants &initial, BoundaryKind boundary,
                       const Invariants &segmentReference, std::size_t removedPairs,
                       std::size_t removedUpperPairs, std::size_t reinjectedPairs);
 #endif

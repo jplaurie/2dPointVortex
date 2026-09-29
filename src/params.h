@@ -9,13 +9,20 @@
 enum class IntegratorKind : std::uint8_t { rk4, dopri5 };
 enum class ReinjectionMode : std::uint8_t { none, independent, paired };
 enum class InitialConditionKind : std::uint8_t { random, ring, single, dipole, file };
+enum class BoundaryKind : std::uint8_t { infinite, periodic_x, periodic, disk };
 [[nodiscard]] constexpr const char *toString(IntegratorKind kind) noexcept {
     return kind == IntegratorKind::rk4 ? "rk4" : "dopri5";
 }
 [[nodiscard]] constexpr const char *toString(ReinjectionMode mode) noexcept {
-    return mode == ReinjectionMode::independent
-               ? "independent"
-               : (mode == ReinjectionMode::paired ? "paired" : "none");
+    switch (mode) {
+    case ReinjectionMode::independent:
+        return "independent";
+    case ReinjectionMode::paired:
+        return "paired";
+    case ReinjectionMode::none:
+        return "none";
+    }
+    return "none";
 }
 [[nodiscard]] constexpr const char *toString(InitialConditionKind kind) noexcept {
     switch (kind) {
@@ -29,6 +36,19 @@ enum class InitialConditionKind : std::uint8_t { random, ring, single, dipole, f
         return "dipole";
     case InitialConditionKind::file:
         return "file";
+    }
+    return "unknown";
+}
+[[nodiscard]] constexpr const char *toString(BoundaryKind kind) noexcept {
+    switch (kind) {
+    case BoundaryKind::infinite:
+        return "infinite";
+    case BoundaryKind::periodic_x:
+        return "periodic_x";
+    case BoundaryKind::periodic:
+        return "periodic";
+    case BoundaryKind::disk:
+        return "disk";
     }
     return "unknown";
 }
@@ -64,6 +84,18 @@ initialConditionFromString(std::string_view value) noexcept {
         return InitialConditionKind::file;
     return std::nullopt;
 }
+[[nodiscard]] constexpr std::optional<BoundaryKind>
+boundaryFromString(std::string_view value) noexcept {
+    if (value == "infinite")
+        return BoundaryKind::infinite;
+    if (value == "periodic_x")
+        return BoundaryKind::periodic_x;
+    if (value == "periodic")
+        return BoundaryKind::periodic;
+    if (value == "disk")
+        return BoundaryKind::disk;
+    return std::nullopt;
+}
 struct SimParams {
     // Simulation and integrator controls.
     std::size_t vortexCount = 100;
@@ -85,8 +117,8 @@ struct SimParams {
     int numThreads = 0;
     IntegratorKind integrator = IntegratorKind::dopri5;
 
-    // Geometry controls. Only the fields selected by boundaryCondition are active.
-    std::string boundaryCondition = "infinite";
+    // Geometry controls. Only the fields selected by boundary are active.
+    BoundaryKind boundary = BoundaryKind::infinite;
     // periodic_x uses boxLengthX; periodic uses both box lengths and image layers.
     double boxLengthX = 2.0;
     double boxLengthY = 2.0;

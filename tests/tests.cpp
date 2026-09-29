@@ -53,16 +53,16 @@ void dopriTest() {
     auto s = pair();
     InfinitePlaneKernel kernel;
     RungeKuttaIntegrator rk(s.size());
-    SimParams p;
-    p.absoluteTolerance = 1e-12;
-    p.relativeTolerance = 1e-10;
-    p.minimumTimeStep = 1e-12;
-    p.maximumTimeStep = 0.2;
+    SimParams params;
+    params.absoluteTolerance = 1e-12;
+    params.relativeTolerance = 1e-10;
+    params.minimumTimeStep = 1e-12;
+    params.maximumTimeStep = 0.2;
     double time = 0, dt = 0.01;
     while (time < 1.0) {
-        auto r = rk.dopri5Step(s, std::min(dt, 1.0 - time), kernel, p);
-        time += r.acceptedTimeStep;
-        dt = r.suggestedTimeStep;
+        const StepResult step = rk.dopri5Step(s, std::min(dt, 1.0 - time), kernel, params);
+        time += step.acceptedTimeStep;
+        dt = step.suggestedTimeStep;
     }
     const double angle = 1.0 / (4.0 * std::numbers::pi);
     near(s.x[1], std::cos(angle), 2e-10, "DOPRI x");
@@ -110,7 +110,7 @@ void checkpointTest() {
          "checkpoint segment invariant");
     if (restored.acceptedSteps != 42 || restored.outputIndex != 7 || restored.eventIndex != 9)
         throw std::runtime_error("checkpoint counters failed");
-    if (restored.boundaryCondition != "infinite" || restored.periodicImageLayers != 0)
+    if (restored.boundary != BoundaryKind::infinite || restored.periodicImageLayers != 0)
         throw std::runtime_error("checkpoint geometry failed");
     if (!restored.dipoleRemoval || !restored.hasDipoleSchedule ||
         restored.dipoleRemovalInterval != 0.25 || restored.nextDipoleRemovalTime != 1.5 ||
@@ -130,14 +130,14 @@ void checkpointTest() {
         throw std::runtime_error("checkpoint overwrite was not refused");
     writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule, progress,
                     true);
-    parameters.boundaryCondition = "periodic_x";
+    parameters.boundary = BoundaryKind::periodic_x;
     parameters.boxLengthX = 3.0;
     CheckpointProgress periodicProgress = progress;
     periodicProgress.outputIndex = 8;
     writeCheckpoint(directory, state, initial, parameters, initial, dipoleState, schedule,
                     periodicProgress);
     const auto periodicRestored = loadCheckpoint(checkpointPath(directory, 8));
-    if (periodicRestored.boundaryCondition != "periodic_x" ||
+    if (periodicRestored.boundary != BoundaryKind::periodic_x ||
         periodicRestored.geometryLengthX != 3.0 || periodicRestored.geometryLengthY != 0.0 ||
         periodicRestored.periodicImageLayers != 0)
         throw std::runtime_error("singly periodic checkpoint geometry failed");
@@ -254,7 +254,7 @@ void upperDipoleRemovalTest() {
         throw std::runtime_error("upper dipole closest-first matching failed");
 
     SimParams reinjected = enabled;
-    reinjected.boundaryCondition = "periodic";
+    reinjected.boundary = BoundaryKind::periodic;
     reinjected.boxLengthX = reinjected.boxLengthY = 2.0;
     reinjected.dipoleRemovalUpperDistance = 0.5;
     reinjected.dipoleReinjection = ReinjectionMode::paired;
@@ -270,7 +270,7 @@ void upperDipoleRemovalTest() {
 }
 void periodicReinjectionTest() {
     SimParams parameters;
-    parameters.boundaryCondition = "periodic";
+    parameters.boundary = BoundaryKind::periodic;
     parameters.boxLengthX = parameters.boxLengthY = 2.0;
     parameters.dipoleRemoval = true;
     parameters.dipoleRemovalDistance = 0.05;
@@ -296,7 +296,7 @@ void periodicReinjectionTest() {
 }
 void periodicXDipoleRemovalTest() {
     SimParams parameters;
-    parameters.boundaryCondition = "periodic_x";
+    parameters.boundary = BoundaryKind::periodic_x;
     parameters.boxLengthX = 2.0;
     parameters.dipoleRemoval = true;
     parameters.dipoleRemovalDistance = 0.05;
@@ -312,7 +312,7 @@ void periodicXDipoleRemovalTest() {
 }
 void diskReinjectionTest() {
     SimParams parameters;
-    parameters.boundaryCondition = "disk";
+    parameters.boundary = BoundaryKind::disk;
     parameters.diskRadius = 1.0;
     parameters.dipoleRemoval = true;
     parameters.dipoleRemovalDistance = 0.1;
@@ -344,7 +344,7 @@ void diskReinjectionTest() {
 }
 void diskWallDipoleRemovalTest() {
     SimParams parameters;
-    parameters.boundaryCondition = "disk";
+    parameters.boundary = BoundaryKind::disk;
     parameters.diskRadius = 1.0;
     parameters.dipoleRemoval = true;
     parameters.dipoleRemovalDistance = 0.05;
@@ -401,17 +401,17 @@ void fsalTest() {
     auto state = pair();
     CountingKernel kernel;
     RungeKuttaIntegrator integrator(state.size());
-    SimParams p;
-    p.absoluteTolerance = 1e-10;
-    p.relativeTolerance = 1e-8;
-    integrator.dopri5Step(state, 1e-3, kernel, p);
+    SimParams params;
+    params.absoluteTolerance = 1e-10;
+    params.relativeTolerance = 1e-8;
+    integrator.dopri5Step(state, 1e-3, kernel, params);
     if (kernel.evaluations != 7)
         throw std::runtime_error("first DOPRI step did not use 7 stages");
-    integrator.dopri5Step(state, 1e-3, kernel, p);
+    integrator.dopri5Step(state, 1e-3, kernel, params);
     if (kernel.evaluations != 13)
         throw std::runtime_error("DOPRI FSAL stage was not reused");
     integrator.invalidateCachedDerivative();
-    integrator.dopri5Step(state, 1e-3, kernel, p);
+    integrator.dopri5Step(state, 1e-3, kernel, params);
     if (kernel.evaluations != 20)
         throw std::runtime_error("DOPRI FSAL cache was not invalidated after an event");
 }

@@ -40,7 +40,7 @@ and dipole removal/reinjection.
 
 - Four geometries: `infinite`, `periodic_x`, `periodic`, and `disk`
 - Fixed-step classical RK4 and adaptive Dormand-Prince 5(4) integration
-- CPU serial/OpenMP, MPI, and CUDA velocity backends
+- CPU serial/OpenMP, MPI, FP64 CUDA, and mixed-precision CUDA backends
 - Text initial conditions, geometry-aware generator, CSV output, and restart checkpoints
 - Optional close dipole removal, with reinjection in bounded periodic and disk domains
 - CMake and Make builds, numerical tests, and analysis/movie tools
@@ -53,6 +53,7 @@ and dipole removal/reinjection.
 ├── initial_conditions/   Initial-condition generator and its guide
 ├── examples/             Small parameter files, including the quick start
 ├── tests/                C++ unit/audit and Python integration/backend tests
+├── benchmarks/           Reproducible backend timing harness, raw results, and plots
 ├── scripts/
 │   ├── vortices.ipynb    Vortex-configuration plotting notebook
 │   ├── diagnostics.ipynb Invariants, drift, and dipole-event notebook
@@ -73,10 +74,10 @@ and dipole removal/reinjection.
 | Program driver | `main.cpp`, `print.cpp` | Loads a run, schedules output, and reports diagnostics |
 | Model and diagnostics | `vortex.h`, `compute.cpp/.h` | Vortex storage, velocity kernels, Hamiltonian, and invariants |
 | Time integration | `timestep.cpp/.h` | RK4 and adaptive DOPRI5 stepping |
-| Execution backends | `backend_cpu.cpp`, `backend_mpi.cpp`, `backend_cuda.cu`, `backend_common.cpp`, `backend.h` | CPU/OpenMP, MPI, CUDA, and shared backend interface |
+| Execution backends | `backend_cpu.cpp`, `backend_mpi.cpp`, `backend_cuda.cu`, `backend_cuda_mixed.cu`, `backend_common.cpp`, `backend.h` | CPU/OpenMP, MPI, CUDA, and shared backend interface |
 | Configuration and input | `params.h`, `read.cpp/.h` | Parameter parsing, validation, and initial-condition loading |
 | Events and restart | `dipole.cpp/.h`, `checkpoint.cpp/.h` | Dipole handling and versioned checkpoint I/O |
-| Benchmark | `benchmark.cpp` | Standalone infinite-plane kernel benchmark |
+| Benchmarks | `benchmark.cpp`, `backend_benchmark.cpp`, `benchmarks/` | Kernel microbenchmark and warmed-up end-to-end backend comparisons |
 
 The velocity kernel is deliberately separate from the timestepper, so a new geometry or faster
 kernel can be added without rewriting the integrators.
@@ -112,8 +113,9 @@ Useful configuration options:
 |---|---:|---|
 | `POINT_VORTEX_OPENMP` | `ON` | Enable OpenMP when the compiler supports it |
 | `POINT_VORTEX_MPI` | `ON` | Build `point_vortex_mpi` when MPI is found |
-| `POINT_VORTEX_CUDA` | `ON` | Build `point_vortex_cuda` when CUDA is found |
-| `POINT_VORTEX_CUDA_ARCHITECTURES` | empty | Optional CUDA target, e.g. `-DPOINT_VORTEX_CUDA_ARCHITECTURES=89` |
+| `POINT_VORTEX_CUDA` | `ON` | Build the FP64 and mixed-precision CUDA executables when CUDA is found |
+| `POINT_VORTEX_CUDA_ARCHITECTURES` | `120` | CUDA target architecture; override for another GPU, e.g. `89` |
+| `POINT_VORTEX_CUDA_TESTS` | `OFF` | Add the GPU-backed FP64 and mixed-precision validation matrices to CTest |
 
 ### Make
 
@@ -122,12 +124,43 @@ make                 # CPU/OpenMP executable and initial-condition generator
 make test            # C++ numerical tests
 make test-output     # Python output/restart integration tests
 make mpi             # MPI executable
-make cuda            # CUDA executable
+make cuda            # FP64 CUDA executable
+make cuda-mixed      # Mixed FP32/FP64 CUDA executable
+make test-cuda-mixed # All geometries/integrators plus restart/dipole GPU test
 make benchmark        # Kernel benchmark
+make benchmark-backends # CPU serial/OpenMP, MPI, and CUDA backend benchmarks
 ```
 
 Make outputs are under `build/make/`; CMake outputs are under the selected build directory.
 They are alternative ways to build the same source tree.
+
+## Performance benchmark
+
+The following benchmark measures complete fixed-step RK4 updates of the infinite-plane model at
+different vortex counts. Lower timestep time is better. Each point is the median of three to five
+calibrated trials; error bars span the observed minimum and maximum.
+
+![CPU, MPI, and CUDA backend scaling](benchmarks/backend_scaling.svg)
+
+These results were measured on an AMD Ryzen 9 9900X and NVIDIA GeForce RTX 5070 using one serial
+CPU core, 12 OpenMP threads, 12 single-threaded MPI ranks, or one GPU. FP64 CUDA narrows the CPU
+gap as $N$ grows but does not cross over. The mixed backend crosses OpenMP between
+$N=4,096$ and $N=8,192$, reaching about 25.2 billion pair interactions per second at the
+largest size. The RTX 5070 reports a 64:1 FP32-to-FP64 throughput ratio, which makes interaction
+precision decisive for this direct-sum kernel. These are machine- and implementation-specific
+results, not a general ranking of the programming models.
+
+The sustained checks use three 60-second timed trials after a calibrated warm-up:
+
+| Vortices | CPU serial | CPU/OpenMP | MPI | CUDA FP64 | CUDA mixed |
+|---:|---:|---:|---:|---:|---:|
+| 8,192 | — | 29.17 ms | 29.73 ms | 67.22 ms | — |
+| 65,536 | 14.85 s | 1.844 s | 1.928 s | 2.881 s | 0.681 s |
+
+The timed region contains only repeated RK4 steps. Process/MPI startup, CUDA context creation,
+allocation, state upload, warm-up, final download, checksums, and file output are excluded. See
+[`benchmarks/`](benchmarks/) for raw trial data, full system metadata, build/run instructions, and
+the plotting script.
 
 ## Run a simulation
 
@@ -138,6 +171,7 @@ use `params.txt`.
 ./build/release/point_vortex_cpu run.params
 mpirun -n 4 ./build/release/point_vortex_mpi run.params
 ./build/release/point_vortex_cuda run.params
+./build/release/point_vortex_cuda_mixed run.params
 ```
 
 Start with the CPU backend when checking a new input. The CPU executable uses OpenMP when it was
@@ -156,6 +190,21 @@ The CUDA backend requires an NVIDIA GPU, driver, and CUDA toolkit. It keeps vort
 RK4/DOPRI5 stages on the GPU between output events, avoiding per-stage host/device transfers.
 The host synchronizes state only for output, diagnostics, checkpoints, and enabled dipole
 processing. This uses additional GPU memory for the integration-stage buffers.
+
+`point_vortex_cuda_mixed` is a complete alternative CUDA backend. It supports all four geometries,
+RK4 and DOPRI5, generated or file-based initial conditions, output, checkpoints/restarts, and
+dipole processing. Positions, Runge--Kutta stages, timestep combinations, and DOPRI5 error control
+remain FP64. Coordinate differences are formed in FP64, while the pair-interaction transcendental
+functions, denominators, products, and four-way velocity accumulation use FP32. Geometry-specific
+kernel specializations avoid a boundary-condition branch in the inner pair loop.
+
+The mixed backend trades numerical precision for throughput and is therefore an explicit opt-in
+executable, not a replacement for `point_vortex_cuda`. In the validation suite, a 1,024-vortex
+alternating-sign ring after 100 RK4 steps differed from the FP64 CPU reference by
+$3.9\times10^{-9}$ in maximum position and $1.15\times10^{-4}$ in relative velocity L2 norm. The
+four-geometry RK4/DOPRI5 matrix had maximum position error below $3.2\times10^{-10}$ and relative
+velocity L2 error below $1.9\times10^{-7}$ for its test problem. Validate the error on each
+scientific workload, especially for close encounters or cancellation-sensitive configurations.
 
 ## Parameter files
 
@@ -508,12 +557,17 @@ python3 tests/backend_consistency.py \
   ./build/release/point_vortex_cpu ./build/release/point_vortex_cuda
 python3 tests/backend_consistency.py \
   ./build/release/point_vortex_cpu mpirun -n 2 ./build/release/point_vortex_mpi
+python3 tests/mixed_precision_consistency.py \
+  ./build/release/point_vortex_cpu ./build/release/point_vortex_cuda_mixed
 ```
 
 `tests/tests.cpp` covers core numerical behavior; `tests/audit_tests.cpp` targets numerical edge
 cases; `tests/output_integration.py` covers output and restart workflows. The analysis and movie
 smoke tests can be run with `python3 tests/tooling_tests.py build/release` when their Python
-dependencies are installed.
+dependencies are installed. The CUDA tests cover every geometry with both integrators; the mixed
+test additionally covers a checkpoint/restart plus dipole-removal/reinjection workflow. To
+register them with CTest, configure with `-DPOINT_VORTEX_CUDA_TESTS=ON` on a machine with an
+accessible NVIDIA GPU.
 
 ## Limitations
 
@@ -521,6 +575,8 @@ dependencies are installed.
   still replicates the source arrays on each rank.
 - CUDA keeps velocity evaluation and RK4/DOPRI5 integration on the device; diagnostics and file
   I/O remain host-side, and the stage buffers increase GPU-memory use.
+- Mixed-precision CUDA has FP32 interaction range and accuracy; use the FP64 CUDA or CPU backend
+  when the workload does not tolerate its measured, problem-dependent error.
 - Doubly periodic dynamics currently requires a square, zero-net-circulation domain;
   `periodic_x` has neither restriction on the unbounded direction nor a neutrality requirement.
 - Dipole reinjection is not defined for the unbounded `infinite` and `periodic_x` geometries.

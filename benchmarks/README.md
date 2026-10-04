@@ -29,6 +29,9 @@ single-threaded ranks, CPU serial uses a library compiled without OpenMP, and bo
 one GPU. Override the parallel CPU choices with `--cpu-threads` and `--mpi-ranks`. Raw trials go to
 `results.csv`; machine/build metadata and the exact timing exclusions go to `system.json`.
 
+The plot's timing panel reports absolute RK4 step time. Its speedup panel is normalized by the
+single-core `CPU serial` backend, which is the conventional baseline for total parallel speedup.
+
 The checked-in plot extends the default sweep to larger populations with three five-second scout
 trials:
 

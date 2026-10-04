@@ -138,7 +138,8 @@ They are alternative ways to build the same source tree.
 
 The following benchmark measures complete fixed-step RK4 updates of the infinite-plane model at
 different vortex counts. Lower timestep time is better. Each point is the median of three to five
-calibrated trials; error bars span the observed minimum and maximum.
+calibrated trials; error bars span the observed minimum and maximum. The speedup panel uses the
+serial CPU result as its 1.0 baseline; the timing panel shows unnormalized timestep times.
 
 ![CPU, MPI, and CUDA backend scaling](benchmarks/backend_scaling.svg)
 
@@ -149,6 +150,10 @@ $N=4,096$ and $N=8,192$, reaching about 25.2 billion pair interactions per secon
 largest size. The RTX 5070 reports a 64:1 FP32-to-FP64 throughput ratio, which makes interaction
 precision decisive for this direct-sum kernel. These are machine- and implementation-specific
 results, not a general ranking of the programming models.
+
+At $N=65,536$, OpenMP, MPI, FP64 CUDA, and mixed CUDA are respectively about 7.8x, 7.7x, 5.2x,
+and 21.8x faster than one CPU core. For the practical comparison with the best CPU configuration,
+mixed CUDA is about 2.8x faster than CPU/OpenMP at that size.
 
 The sustained checks use three 60-second timed trials after a calibrated warm-up:
 

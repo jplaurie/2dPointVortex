@@ -71,7 +71,7 @@ def main() -> None:
     timing_axis.grid(True, which="both", alpha=0.25)
     timing_axis.legend(frameon=False)
 
-    baseline = medians.get("CPU/OpenMP", {})
+    baseline = medians.get("CPU serial", {})
     for backend in BACKEND_ORDER:
         if backend not in medians:
             continue
@@ -81,7 +81,7 @@ def main() -> None:
                           marker=MARKERS[backend], linewidth=2)
     speedup_axis.axhline(1.0, color="0.45", linewidth=1, linestyle="--")
     speedup_axis.set(xscale="log", yscale="log", xlabel="Number of vortices, N",
-                     ylabel="Speedup over CPU/OpenMP", title="Backend speedup")
+                     ylabel="Speedup over one CPU core", title="Backend speedup")
     speedup_axis.grid(True, which="both", alpha=0.25)
 
     all_counts = sorted({count for backend in samples.values() for count in backend})

@@ -56,5 +56,15 @@ python3 benchmarks/run_benchmarks.py --resolutions 65536 --trials 3 \
 ```
 
 The repository also retains the corresponding one-minute check at `N=8192` so the short and
-sustained measurements can be compared at both ends of the extended range. Serial CPU and mixed
-CUDA sustained results are in `results_serial_mixed_sustained_65536.csv`.
+sustained measurements can be compared at both ends of the extended range. The serial CPU and
+mixed-CUDA trials at that size can be reproduced with:
+
+```bash
+python3 benchmarks/run_benchmarks.py --backends serial cuda_mixed \
+  --resolutions 8192 --trials 3 --target-seconds 60 --warmup-seconds 5 \
+  --output benchmarks/results_serial_mixed_sustained_8192.csv \
+  --metadata benchmarks/system_serial_mixed_sustained_8192.json --overwrite
+```
+
+Serial CPU and mixed-CUDA sustained results are stored in the matching
+`results_serial_mixed_sustained_8192.csv` and `results_serial_mixed_sustained_65536.csv` files.

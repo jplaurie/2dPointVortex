@@ -159,7 +159,7 @@ The sustained checks use three 60-second timed trials after a calibrated warm-up
 
 | Vortices | CPU serial | CPU/OpenMP | MPI | CUDA FP64 | CUDA mixed |
 |---:|---:|---:|---:|---:|---:|
-| 8,192 | — | 29.17 ms | 29.73 ms | 67.22 ms | — |
+| 8,192 | 230.9 ms | 29.17 ms | 29.73 ms | 67.22 ms | 20.41 ms |
 | 65,536 | 14.85 s | 1.844 s | 1.928 s | 2.881 s | 0.681 s |
 
 The timed region contains only repeated RK4 steps. Process/MPI startup, CUDA context creation,

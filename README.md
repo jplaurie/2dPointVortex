@@ -5,6 +5,8 @@ supports the infinite plane, a plane periodic in one direction, a square periodi
 circular disk; CPU/OpenMP, MPI, and NVIDIA CUDA executables use the same input format,
 integrators, output files, and checkpoints.
 
+Current release: `v0.7.0` (2026-10-04).
+
 The solver uses direct all-pairs velocity sums: `O(N^2)` except for the doubly periodic
 `O(N^2 M)` image sum. It is a clear numerical reference and a practical tool for small-to-medium
 simulations; it is not a tree-code or FMM implementation.
@@ -587,6 +589,21 @@ accessible NVIDIA GPU.
 - Dipole reinjection is not defined for the unbounded `infinite` and `periodic_x` geometries.
 - Core regularization is available only for the infinite plane.
 - Singular encounters, disk-boundary violations, and non-finite states stop the run.
+
+## Version history
+
+These versions were assigned retrospectively to the main development milestones;
+the dates below are the dates of the tagged commits.
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| `v0.7.0` | 2026-10-04 | Added a complete mixed-precision CUDA backend, reproducible multi-backend benchmarks and performance plots; introduced typed configuration values and separated simulation orchestration from the entry point. |
+| `v0.6.0` | 2026-09-28 | Added large-scale dissipation through dipole removal and optional reinjection, including checkpoint/restart support and tests. |
+| `v0.5.0` | 2026-09-24 | Added cylindrical geometry (a plane periodic in one direction) across the solver, initial-condition tools, plotting/movie tools and backend tests. |
+| `v0.4.0` | 2026-09-16 | Added reusable plotting helpers, diagnostics notebooks and vortex movie generation. |
+| `v0.3.0` | 2026-09-08 | Standardized recorded data and checkpoint structures, expanded output integration tests and refactored the solver internals. |
+| `v0.2.0` | 2026-09-04 | Added the NVIDIA CUDA implementation and its build and test support. |
+| `v0.1.0` | 2026-09-03 | Introduced the modern dependency-light C++20 point-vortex solver with common parameter, integration and output infrastructure. |
 
 ## License and citation
 
